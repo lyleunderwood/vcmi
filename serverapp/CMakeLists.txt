@@ -15,7 +15,22 @@ set(serverapp_LIBS vcmi)
 if(CMAKE_SYSTEM_NAME MATCHES FreeBSD OR HAIKU)
 	list(APPEND serverapp_LIBS execinfo)
 endif()
-target_link_libraries(vcmiserver PRIVATE ${serverapp_LIBS} minizip::minizip vcmiservercommon)
+# Link vcmiservercommon with --whole-archive so static-initializer-only
+# translation units (e.g. self-registering pack codecs in server/json/packs/)
+# are not dropped by the linker. Costs a small amount of binary size but
+# enables the registry-driven JSON adapter pattern. Works on GNU ld and lld;
+# Apple ld uses -Wl,-force_load.
+if(APPLE)
+	target_link_libraries(vcmiserver PRIVATE ${serverapp_LIBS} minizip::minizip
+		-Wl,-force_load $<TARGET_FILE:vcmiservercommon>)
+elseif(MSVC)
+	# MSVC: use /WHOLEARCHIVE option on the static lib
+	target_link_libraries(vcmiserver PRIVATE ${serverapp_LIBS} minizip::minizip vcmiservercommon)
+	set_target_properties(vcmiserver PROPERTIES LINK_FLAGS "/WHOLEARCHIVE:vcmiservercommon")
+else()
+	target_link_libraries(vcmiserver PRIVATE ${serverapp_LIBS} minizip::minizip
+		-Wl,--whole-archive vcmiservercommon -Wl,--no-whole-archive)
+endif()
 
 target_include_directories(vcmiserver
 	PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}

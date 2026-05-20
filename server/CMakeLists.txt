@@ -25,6 +25,12 @@ set(vcmiservercommon_SRCS
 		NetPacksServer.cpp
 		NetPacksLobbyServer.cpp
 		TurnTimerHandler.cpp
+
+		json/PackCodecRegistry.cpp
+		json/shared/Component.cpp
+		json/shared/MetaString.cpp
+		json/packs/LobbyClientConnected.cpp
+		json/packs/LobbyClientDisconnected.cpp
 )
 
 set(vcmiservercommon_HEADERS
@@ -55,6 +61,11 @@ set(vcmiservercommon_HEADERS
 		LobbyNetPackVisitors.h
 		ServerNetPackVisitors.h
 		TurnTimerHandler.h
+
+		json/PackCodec.h
+		json/PackCodecRegistry.h
+		json/shared/Component.h
+		json/shared/MetaString.h
 )
 
 assign_source_group(${vcmiservercommon_SRCS} ${vcmiservercommon_HEADERS})
