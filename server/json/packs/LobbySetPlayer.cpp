@@ -10,9 +10,9 @@
 
 #include "../PackCodec.h"
 #include "../PackCodecRegistry.h"
+#include "../shared/PlayerColor.h"
 
 #include "../../../lib/networkPacks/PacksForLobby.h"
-#include "../../../lib/constants/EntityIdentifiers.h"
 
 class LobbySetPlayerCodec final : public PackCodec
 {
@@ -28,7 +28,7 @@ public:
 	{
 		auto pack = std::make_unique<LobbySetPlayer>();
 		if (json["clickedColor"].isNumber())
-			pack->clickedColor = PlayerColor(static_cast<si32>(json["clickedColor"].Integer()));
+			pack->clickedColor = homamweb::shared::playerColorFromJson(json["clickedColor"]);
 		return pack;
 	}
 
@@ -36,7 +36,7 @@ public:
 	{
 		const auto & p = dynamic_cast<const LobbySetPlayer &>(pack);
 		out["type"].String() = typeName();
-		out["clickedColor"].Integer() = static_cast<int64_t>(p.clickedColor.getNum());
+		out["clickedColor"] = homamweb::shared::playerColorToJson(p.clickedColor);
 	}
 };
 

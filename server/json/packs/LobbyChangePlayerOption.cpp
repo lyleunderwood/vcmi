@@ -10,6 +10,7 @@
 
 #include "../PackCodec.h"
 #include "../PackCodecRegistry.h"
+#include "../shared/PlayerColor.h"
 
 #include "../../../lib/networkPacks/PacksForLobby.h"
 
@@ -63,7 +64,7 @@ public:
 			pack->value = static_cast<int32_t>(json["value"].Integer());
 
 		if (json["color"].isNumber())
-			pack->color = PlayerColor(static_cast<int32_t>(json["color"].Integer()));
+			pack->color = homamweb::shared::playerColorFromJson(json["color"]);
 
 		return pack;
 	}
@@ -75,7 +76,7 @@ public:
 		out["type"].String() = typeName();
 		out["what"].String() = whatToString(p.what);
 		out["value"].Integer() = static_cast<int64_t>(p.value);
-		out["color"].Integer() = static_cast<int64_t>(p.color.getNum());
+		out["color"] = homamweb::shared::playerColorToJson(p.color);
 	}
 };
 
