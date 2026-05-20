@@ -27,11 +27,15 @@ set(vcmiservercommon_SRCS
 		TurnTimerHandler.cpp
 
 		json/PackCodecRegistry.cpp
-		json/shared/Component.cpp
-		json/shared/MetaString.cpp
-		json/packs/LobbyClientConnected.cpp
-		json/packs/LobbyClientDisconnected.cpp
 )
+
+# Auto-discover per-pack codec sources so new files dropped into
+# json/packs/ or json/shared/ pick up without editing this list.
+# CONFIGURE_DEPENDS makes the build system re-glob on each build.
+file(GLOB vcmiservercommon_PACK_CODECS CONFIGURE_DEPENDS
+		"${CMAKE_CURRENT_SOURCE_DIR}/json/packs/*.cpp"
+		"${CMAKE_CURRENT_SOURCE_DIR}/json/shared/*.cpp")
+list(APPEND vcmiservercommon_SRCS ${vcmiservercommon_PACK_CODECS})
 
 set(vcmiservercommon_HEADERS
 		StdInc.h
@@ -64,9 +68,12 @@ set(vcmiservercommon_HEADERS
 
 		json/PackCodec.h
 		json/PackCodecRegistry.h
-		json/shared/Component.h
-		json/shared/MetaString.h
 )
+
+file(GLOB vcmiservercommon_PACK_CODEC_HEADERS CONFIGURE_DEPENDS
+		"${CMAKE_CURRENT_SOURCE_DIR}/json/packs/*.h"
+		"${CMAKE_CURRENT_SOURCE_DIR}/json/shared/*.h")
+list(APPEND vcmiservercommon_HEADERS ${vcmiservercommon_PACK_CODEC_HEADERS})
 
 assign_source_group(${vcmiservercommon_SRCS} ${vcmiservercommon_HEADERS})
 
