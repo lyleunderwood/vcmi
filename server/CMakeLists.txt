@@ -19,6 +19,7 @@ set(vcmiservercommon_SRCS
 
 		CGameHandler.cpp
 		GlobalLobbyProcessor.cpp
+		JsonAdapter.cpp
 		ServerSpellCastEnvironment.cpp
 		CVCMIServer.cpp
 		NetPacksServer.cpp
@@ -47,6 +48,7 @@ set(vcmiservercommon_HEADERS
 
 		CGameHandler.h
 		GlobalLobbyProcessor.h
+		JsonAdapter.h
 		IGameServer.h
 		ServerSpellCastEnvironment.h
 		CVCMIServer.h

@@ -12,6 +12,7 @@
 
 #include "CGameHandler.h"
 #include "GlobalLobbyProcessor.h"
+#include "JsonAdapter.h"
 #include "LobbyNetPackVisitors.h"
 #include "processors/PlayerMessageProcessor.h"
 
@@ -114,6 +115,11 @@ uint16_t CVCMIServer::startAcceptingIncomingConnections(bool listenForConnection
 	{
 		auto srvport = networkServer->start(port);
 		logNetwork->info("Listening for connections at port %d", srvport);
+
+		// Spike: also start JSON-over-TCP adapter on the next port.
+		jsonAdapter = std::make_unique<JsonAdapter>(*this);
+		jsonAdapter->start(srvport + 1);
+
 		return srvport;
 	}
 	else
@@ -136,13 +142,25 @@ void CVCMIServer::onNewConnection(const std::shared_ptr<INetworkConnection> & co
 
 void CVCMIServer::onPacketReceived(const std::shared_ptr<INetworkConnection> & connection, const std::vector<std::byte> & message)
 {
-	std::shared_ptr<GameConnection> c = findConnection(connection);
-	if (c == nullptr)
-		throw std::out_of_range("Unknown connection received in CVCMIServer::findConnection");
+	try
+	{
+		std::shared_ptr<GameConnection> c = findConnection(connection);
+		if (c == nullptr)
+		{
+			logNetwork->error("Unknown connection in onPacketReceived; dropping");
+			connection->close();
+			return;
+		}
 
-	auto pack = c->retrievePack(message);
-	CVCMIServerPackVisitor visitor(*this, this->gh, c);
-	pack->visit(visitor);
+		auto pack = c->retrievePack(message);
+		CVCMIServerPackVisitor visitor(*this, this->gh, c);
+		pack->visit(visitor);
+	}
+	catch (const std::exception & e)
+	{
+		logNetwork->error("Exception while processing pack from connection: %s. Dropping connection.", e.what());
+		try { connection->close(); } catch (...) {}
+	}
 }
 
 void CVCMIServer::setState(EServerState value)
@@ -415,7 +433,10 @@ void CVCMIServer::announcePack(CPackForLobby & pack)
 		// Until UUID set we only pass LobbyClientConnected to this client
 		//if(c->uuid == uuid && !dynamic_cast<LobbyClientConnected *>(pack.get()))
 		//	continue;
-		activeConnection->sendPack(pack);
+		if (jsonAdapter && jsonAdapter->ownsConnection(activeConnection))
+			jsonAdapter->sendPackToJsonClient(activeConnection, pack);
+		else
+			activeConnection->sendPack(pack);
 	}
 
 	ApplyOnServerAfterAnnounceNetPackVisitor applier(*this);

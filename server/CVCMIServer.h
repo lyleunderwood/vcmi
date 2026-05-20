@@ -33,6 +33,7 @@ class CGameHandler;
 class CBaseForServerApply;
 class CBaseForGHApply;
 class GlobalLobbyProcessor;
+class JsonAdapter;
 
 class CVCMIServer : public LobbyInfo, public INetworkServerListener, public INetworkTimerListener, public IServerDiscoveryAnnouncer, public IGameServer
 {
@@ -45,6 +46,9 @@ class CVCMIServer : public LobbyInfo, public INetworkServerListener, public INet
 
 	/// Handles connection with global lobby. Must be constructed and destroyed after network handler
 	std::unique_ptr<GlobalLobbyProcessor> lobbyProcessor;
+
+	/// Spike: JSON-over-TCP ingress adapter (port+1).
+	std::unique_ptr<JsonAdapter> jsonAdapter;
 
 	EServerState state = EServerState::LOBBY;
 
