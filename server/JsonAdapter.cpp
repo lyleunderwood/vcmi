@@ -18,6 +18,9 @@
 #include "../lib/network/NetworkInterface.h"
 #include "../lib/networkPacks/PacksForLobby.h"
 #include "../lib/networkPacks/PacksForServer.h"
+#include "../lib/networkPacks/PacksForClient.h"
+#include "../lib/gameState/CGameState.h"
+#include "../lib/mapObjects/CGHeroInstance.h"
 #include "../lib/serializer/GameConnection.h"
 
 JsonAdapter::JsonAdapter(CVCMIServer & srv) : server(srv) {}
@@ -154,9 +157,37 @@ void JsonAdapter::sendPackToJsonClientImpl(const std::shared_ptr<GameConnection>
 		out["cppType"].String() = typeid(pack).name();
 	}
 
+	// Pack-specific outbound enrichment: decorate the JSON with engine-state info
+	// the codec can't access (codecs are stateless). Keeps codec contract clean
+	// while letting wrapper clients learn things the binary protocol carries
+	// implicitly via gameState references.
+	enrichOutbound(pack, out);
+
 	std::string body = out.toCompactString();
 	std::vector<std::byte> payload(body.size());
 	std::memcpy(payload.data(), body.data(), body.size());
 	logNetwork->info("[JsonAdapter] outbound: %s", body);
 	sock->sendPacket(payload); // NetworkConnection::sendPacket prepends the 4-byte size header itself
+}
+
+void JsonAdapter::enrichOutbound(const CPack & pack, JsonNode & out)
+{
+	// HeroVisit: add the hero's current position. The engine emits these at
+	// game start for each starting hero (with `starting=true`), which is how
+	// wrapper clients first learn where their heroes are on day 1.
+	if (auto * hv = dynamic_cast<const HeroVisit *>(&pack))
+	{
+		if (server.gh && server.gh->gs)
+		{
+			const auto * hero = server.gh->gs->getHero(hv->heroId);
+			if (hero)
+			{
+				JsonNode & pos = out["position"];
+				pos.Struct();
+				pos["x"].Integer() = hero->pos.x;
+				pos["y"].Integer() = hero->pos.y;
+				pos["z"].Integer() = hero->pos.z;
+			}
+		}
+	}
 }

@@ -12,6 +12,7 @@ class CVCMIServer;
 
 VCMI_LIB_NAMESPACE_BEGIN
 class GameConnection;
+class JsonNode;
 struct CPack;
 struct CPackForLobby;
 struct CPackForClient;
@@ -47,4 +48,7 @@ public:
 private:
 	/// Shared body for the typed overloads above — dispatches via the registry.
 	void sendPackToJsonClientImpl(const std::shared_ptr<GameConnection> & game, CPack & pack);
+	/// Decorate outbound JSON with engine-state info the codec can't access
+	/// (codecs are stateless). E.g. hero positions for HeroVisit.
+	void enrichOutbound(const CPack & pack, JsonNode & out);
 };
