@@ -1237,7 +1237,12 @@ void CVCMIServer::applyPack(CPackForClient & pack)
 {
 	logNetwork->trace("\tSending to all clients: %s", typeid(pack).name());
 	for (const auto & c : activeConnections)
-		c->sendPack(pack);
+	{
+		if (jsonAdapter && jsonAdapter->ownsConnection(c))
+			jsonAdapter->sendPackToJsonClient(c, pack);
+		else
+			c->sendPack(pack);
+	}
 	gh->gs->apply(pack);
 	logNetwork->trace("\tApplied on gameState(): %s", typeid(pack).name());
 }

@@ -106,6 +106,16 @@ void JsonAdapter::onPacketReceived(const std::shared_ptr<INetworkConnection> & c
 
 void JsonAdapter::sendPackToJsonClient(const std::shared_ptr<GameConnection> & game, CPackForLobby & pack)
 {
+	sendPackToJsonClientImpl(game, pack);
+}
+
+void JsonAdapter::sendPackToJsonClient(const std::shared_ptr<GameConnection> & game, CPackForClient & pack)
+{
+	sendPackToJsonClientImpl(game, pack);
+}
+
+void JsonAdapter::sendPackToJsonClientImpl(const std::shared_ptr<GameConnection> & game, CPack & pack)
+{
 	std::shared_ptr<INetworkConnection> sock;
 	for (const auto & pair : jsonConnections)
 		if (pair.second == game) { sock = pair.first; break; }

@@ -12,7 +12,9 @@ class CVCMIServer;
 
 VCMI_LIB_NAMESPACE_BEGIN
 class GameConnection;
+struct CPack;
 struct CPackForLobby;
+struct CPackForClient;
 VCMI_LIB_NAMESPACE_END
 
 class JsonAdapter final : public INetworkServerListener
@@ -30,11 +32,19 @@ public:
 	/// Returns true if the given GameConnection was created by this adapter (JSON-mode).
 	bool ownsConnection(const std::shared_ptr<GameConnection> & game) const;
 
-	/// Serialize a lobby pack to JSON and send to the given JSON-mode connection.
-	/// No-op if the connection is not JSON-mode or the pack type is unsupported.
+	/// Serialize a pack to JSON and send to the given JSON-mode connection.
+	/// Works for any CPack subtype (CPackForLobby, CPackForClient, ...);
+	/// dispatches via PackCodecRegistry. No-op if the connection is not JSON-mode
+	/// or no codec is registered for the pack type (emits an `Unsupported` envelope
+	/// in that case so the wrapper knows something happened).
 	void sendPackToJsonClient(const std::shared_ptr<GameConnection> & game, CPackForLobby & pack);
+	void sendPackToJsonClient(const std::shared_ptr<GameConnection> & game, CPackForClient & pack);
 
 	void onNewConnection(const std::shared_ptr<INetworkConnection> & connection) override;
 	void onPacketReceived(const std::shared_ptr<INetworkConnection> & connection, const std::vector<std::byte> & message) override;
 	void onDisconnected(const std::shared_ptr<INetworkConnection> & connection, const std::string & errorMessage) override;
+
+private:
+	/// Shared body for the typed overloads above — dispatches via the registry.
+	void sendPackToJsonClientImpl(const std::shared_ptr<GameConnection> & game, CPack & pack);
 };
