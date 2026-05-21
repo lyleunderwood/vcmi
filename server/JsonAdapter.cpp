@@ -25,6 +25,8 @@
 #include "../lib/mapObjects/CGHeroInstance.h"
 #include "../lib/pathfinder/CGPathNode.h"
 #include "../lib/pathfinder/PathfinderOptions.h"
+#include "queries/QueriesProcessor.h"
+#include "queries/CQuery.h"
 #include "../lib/serializer/GameConnection.h"
 
 JsonAdapter::JsonAdapter(CVCMIServer & srv) : server(srv) {}
@@ -216,6 +218,35 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		resp["width"].Integer() = map.width;
 		resp["height"].Integer() = map.height;
 		resp["levels"].Integer() = map.levels();
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperListQueries")
+	{
+		// Surface all pending engine-side queries (battle, dialog, level-up, etc.)
+		// so agents can see what's blocking them and respond via QueryReply.
+		JsonNode resp;
+		resp["type"].String() = "WrapperQueries";
+		JsonNode & arr = resp["queries"];
+		arr.Vector();
+		const auto all = server.gh->queries->allQueries();
+		for (const auto & q : all)
+		{
+			if (!q) continue;
+			JsonNode entry;
+			entry["queryID"].Integer() = q->queryID.getNum();
+			JsonNode & players = entry["players"];
+			players.Vector();
+			for (const auto & p : q->players)
+			{
+				JsonNode pn;
+				pn.Integer() = p.getNum();
+				players.Vector().push_back(pn);
+			}
+			entry["description"].String() = q->toString();
+			arr.Vector().push_back(entry);
+		}
 		sendRawJson(sock, resp);
 		return;
 	}
