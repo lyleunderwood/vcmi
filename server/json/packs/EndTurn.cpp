@@ -10,7 +10,7 @@
 
 #include "../PackCodec.h"
 #include "../PackCodecRegistry.h"
-#include "../shared/PlayerColor.h"
+#include "../shared/CPackForServerBase.h"
 
 #include "../../../lib/networkPacks/PacksForServer.h"
 
@@ -27,25 +27,15 @@ public:
 	std::unique_ptr<CPack> fromJson(const JsonNode & json) const override
 	{
 		auto pack = std::make_unique<EndTurn>();
-
-		// Inherited from CPackForServer.
-		if (json["player"].isNumber())
-			pack->player = homamweb::shared::playerColorFromJson(json["player"]);
-		if (json["requestID"].isNumber())
-			pack->requestID = static_cast<uint32_t>(json["requestID"].Integer());
-
+		homamweb::shared::readServerPackBase(json, *pack);
 		return pack;
 	}
 
 	void toJson(const CPack & pack, JsonNode & out) const override
 	{
 		const auto & p = dynamic_cast<const EndTurn &>(pack);
-
 		out["type"].String() = typeName();
-
-		// Inherited from CPackForServer.
-		out["player"] = homamweb::shared::playerColorToJson(p.player);
-		out["requestID"].Integer() = static_cast<int64_t>(p.requestID);
+		homamweb::shared::writeServerPackBase(p, out);
 	}
 };
 
