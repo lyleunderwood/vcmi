@@ -29,12 +29,16 @@ struct BattleLayout;
 
 class DLL_LINKAGE BattleInfo : public CBonusSystemNode, public CBattleInfoCallback, public IBattleState, public GameCallbackHolder
 {
+	void postDeserialize();
+public:
+	// homam-web fork: these three were private upstream but our JSON codec
+	// needs read access to serialize the BattleStart.info payload. No
+	// invariants are violated by the read; writes still go through the
+	// engine's IBattleState methods.
 	BattleSideArray<SideInBattle> sides; //sides[0] - attacker, sides[1] - defender
 	std::unique_ptr<BattleLayout> layout;
 	si32 round;
 
-	void postDeserialize();
-public:
 	BattleID battleID = BattleID(0);
 
 	si32 activeStack;
