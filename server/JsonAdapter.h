@@ -52,4 +52,10 @@ private:
 	/// (codecs are stateless). E.g. hero positions for HeroVisit, controlled
 	/// player slots for LobbyStartGame.
 	void enrichOutbound(const std::shared_ptr<GameConnection> & game, const CPack & pack, JsonNode & out);
+	/// Handle "Wrapper..." namespaced query packs the wrapper sends to inspect
+	/// engine state (map size, regions, etc.). Not real engine packs; never
+	/// forwarded to gh. We synthesize a response and send it back.
+	void handleWrapperQuery(const std::shared_ptr<INetworkConnection> & sock, const std::string & queryType, const JsonNode & req);
+	/// Send raw JSON over a JSON-mode connection (used by wrapper-query responses).
+	void sendRawJson(const std::shared_ptr<INetworkConnection> & sock, const JsonNode & json);
 };

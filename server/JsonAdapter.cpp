@@ -92,6 +92,15 @@ void JsonAdapter::onPacketReceived(const std::shared_ptr<INetworkConnection> & c
 		const std::string & packType = root["type"].String();
 		logNetwork->info("[JsonAdapter] received pack type='%s'", packType);
 
+		// Wrapper-namespace queries: not real engine packs. The wrapper uses
+		// these to ask for engine-state info (map size, terrain regions, etc.).
+		// We build a response and send it back, never forwarding to the engine.
+		if (packType.rfind("Wrapper", 0) == 0)
+		{
+			handleWrapperQuery(connection, packType, root);
+			return;
+		}
+
 		const PackCodec * codec = PackCodecRegistry::instance().findByTypeName(packType);
 		if (codec == nullptr)
 			throw std::runtime_error("No codec registered for pack type: " + packType);
@@ -173,6 +182,107 @@ void JsonAdapter::sendPackToJsonClientImpl(const std::shared_ptr<GameConnection>
 	std::memcpy(payload.data(), body.data(), body.size());
 	logNetwork->info("[JsonAdapter] outbound: %s", body);
 	sock->sendPacket(payload); // NetworkConnection::sendPacket prepends the 4-byte size header itself
+}
+
+void JsonAdapter::sendRawJson(const std::shared_ptr<INetworkConnection> & sock, const JsonNode & json)
+{
+	std::string body = json.toCompactString();
+	std::vector<std::byte> payload(body.size());
+	std::memcpy(payload.data(), body.data(), body.size());
+	logNetwork->info("[JsonAdapter] outbound (raw): %s", body);
+	sock->sendPacket(payload);
+}
+
+void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> & sock, const std::string & queryType, const JsonNode & req)
+{
+	if (!server.gh || !server.gh->gs)
+	{
+		JsonNode err;
+		err["type"].String() = "WrapperQueryError";
+		err["queryType"].String() = queryType;
+		err["error"].String() = "no game running yet";
+		sendRawJson(sock, err);
+		return;
+	}
+	const auto & map = server.gh->gs->getMap();
+
+	if (queryType == "WrapperQueryMap")
+	{
+		// Map metadata: size, level count, and a summary of known objects.
+		JsonNode resp;
+		resp["type"].String() = "WrapperMapMeta";
+		resp["width"].Integer() = map.width;
+		resp["height"].Integer() = map.height;
+		resp["levels"].Integer() = map.levels();
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperQueryRegion")
+	{
+		const int x0 = static_cast<int>(req["x0"].Integer());
+		const int y0 = static_cast<int>(req["y0"].Integer());
+		const int x1 = static_cast<int>(req["x1"].Integer());
+		const int y1 = static_cast<int>(req["y1"].Integer());
+		const int z = req["z"].isNumber() ? static_cast<int>(req["z"].Integer()) : 0;
+
+		JsonNode resp;
+		resp["type"].String() = "WrapperMapRegion";
+		resp["x0"].Integer() = x0;
+		resp["y0"].Integer() = y0;
+		resp["x1"].Integer() = x1;
+		resp["y1"].Integer() = y1;
+		resp["z"].Integer() = z;
+		JsonNode & arr = resp["tiles"];
+		arr.Vector();
+
+		for (int y = y0; y <= y1; y++)
+		{
+			for (int x = x0; x <= x1; x++)
+			{
+				const int3 t(x, y, z);
+				if (!map.isInTheMap(t)) continue;
+				const TerrainTile & tile = map.getTile(t);
+				JsonNode entry;
+				entry["x"].Integer() = x;
+				entry["y"].Integer() = y;
+				entry["z"].Integer() = z;
+				entry["terrain"].Integer() = tile.getTerrainID().getNum();
+				entry["blocked"].Bool() = tile.blocked();
+				entry["visitable"].Bool() = tile.visitable();
+				const auto topObj = tile.topVisitableObj();
+				if (topObj.getNum() >= 0)
+				{
+					entry["topObject"].Integer() = topObj.getNum();
+					if (const auto * obj = server.gh->gs->getObj(topObj))
+					{
+						entry["objType"].Integer() = obj->ID.getNum();
+						entry["objSubType"].Integer() = obj->subID.getNum();
+						if (obj->getOwner().isValidPlayer())
+							entry["objOwner"].Integer() = obj->getOwner().getNum();
+					}
+				}
+				const int3 guard = map.guardingCreaturePosition(t);
+				if (map.isInTheMap(guard))
+				{
+					JsonNode & g = entry["guardedBy"];
+					g.Struct();
+					g["x"].Integer() = guard.x;
+					g["y"].Integer() = guard.y;
+					g["z"].Integer() = guard.z;
+				}
+				arr.Vector().push_back(entry);
+			}
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	JsonNode err;
+	err["type"].String() = "WrapperQueryError";
+	err["queryType"].String() = queryType;
+	err["error"].String() = "unknown query type";
+	sendRawJson(sock, err);
 }
 
 void JsonAdapter::enrichOutbound(const std::shared_ptr<GameConnection> & game, const CPack & pack, JsonNode & out)
