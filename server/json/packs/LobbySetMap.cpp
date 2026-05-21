@@ -7,14 +7,19 @@
  * C++ pack definition:  vcmi/lib/networkPacks/PacksForLobby.h
  * TypeScript twin:      wrapper/src/codecs/lobby/LobbySetMap.ts
  *
- * On inbound we accept either an opaque mapInfo placeholder (legacy /
- * passthrough behavior) OR a `{ "fileURI": "Maps/X.h3m" }` hint that
- * causes us to construct a real CMapInfo server-side via mapInit().
- * The hint path is required because TypeScript clients can't construct
- * a CMapInfo from JSON (it's a heavyweight C++ engine type); the
- * server has to load it from a known map filename.
+ * On inbound we accept a structured `mapInfo` hint:
+ *   { "fileURI": "Maps/X.h3m",  "kind": "map" }   -- new game (default)
+ *   { "fileURI": "Saves/X",     "kind": "save" }  -- load saved game (.vsgm1 implied)
  *
- * mapGenOpts (random-map generator options) remains opaque-only for now.
+ * Server-side we then construct a real CMapInfo by calling either mapInit()
+ * or saveInit(). TypeScript clients can't construct a CMapInfo from JSON
+ * (it's a heavyweight C++ engine type); the server must load it from a
+ * known filename.
+ *
+ * Outbound shape mirrors what we accept on inbound (just fileURI for now;
+ * kind is omitted since the wrapper can infer from si->mode).
+ *
+ * mapGenOpts (random-map generator options) remains opaque-only.
  */
 #include "StdInc.h"
 
@@ -23,6 +28,7 @@
 
 #include "../../../lib/networkPacks/PacksForLobby.h"
 #include "../../../lib/mapping/CMapInfo.h"
+#include "../../../lib/filesystem/ResourcePath.h"
 
 class LobbySetMapCodec final : public PackCodec
 {
@@ -38,22 +44,25 @@ public:
 	{
 		auto pack = std::make_unique<LobbySetMap>();
 
-		// mapInfo: if a fileURI string is supplied, load a real CMapInfo
-		// server-side via mapInit(). Otherwise leave the pointer nullptr
-		// (legacy opaque-placeholder behavior).
 		const JsonNode & miNode = json["mapInfo"];
 		if (miNode.isStruct() && miNode["fileURI"].isString())
 		{
+			const std::string & fileURI = miNode["fileURI"].String();
+			const std::string kind = miNode["kind"].isString() ? miNode["kind"].String() : "map";
+
 			auto mi = std::make_shared<CMapInfo>();
 			try
 			{
-				mi->mapInit(miNode["fileURI"].String());
+				if (kind == "save")
+					mi->saveInit(ResourcePath(fileURI, EResType::SAVEGAME));
+				else
+					mi->mapInit(fileURI);
 				pack->mapInfo = mi;
 			}
 			catch (const std::exception & e)
 			{
-				logNetwork->error("[LobbySetMap codec] failed to load map '%s': %s",
-					miNode["fileURI"].String(), e.what());
+				logNetwork->error("[LobbySetMap codec] failed to load %s '%s': %s",
+					kind, fileURI, e.what());
 				// Leave mapInfo as nullptr; downstream will refuse to start.
 			}
 		}
@@ -70,11 +79,11 @@ public:
 
 		if (p.mapInfo)
 		{
-			// Emit a structured placeholder including fileURI so the
-			// wrapper can correlate state changes with the map it asked for.
 			JsonNode & mi = out["mapInfo"];
 			mi.Struct();
 			mi["fileURI"].String() = p.mapInfo->fileURI;
+			// Signal which kind this is so the wrapper can disambiguate echoes.
+			mi["kind"].String() = p.mapInfo->scenarioOptionsOfSave ? "save" : "map";
 		}
 
 		if (p.mapGenOpts)
