@@ -1,0 +1,186 @@
+/*
+ * MakeAction.cpp, part of homam-web fork of VCMI engine.
+ *
+ * JSON codec for MakeAction (a client -> server gameplay action).
+ *
+ * C++ pack definition:  vcmi/lib/networkPacks/PacksForServer.h
+ * TypeScript twin:      wrapper/src/codecs/server/MakeAction.ts
+ *
+ * Carries a `BattleAction` struct (vcmi/lib/battle/BattleAction.h) with a
+ * nested vector<DestinationInfo>. Both are inlined into this codec — no
+ * shared `BattleAction` codec exists yet.
+ */
+#include "StdInc.h"
+
+#include "../PackCodec.h"
+#include "../PackCodecRegistry.h"
+#include "../shared/CPackForServerBase.h"
+
+#include "../../../lib/networkPacks/PacksForServer.h"
+#include "../../../lib/battle/BattleAction.h"
+#include "../../../lib/battle/BattleSide.h"
+#include "../../../lib/battle/BattleHex.h"
+#include "../../../lib/constants/EntityIdentifiers.h"
+#include "../../../lib/constants/Enumerations.h"
+
+namespace
+{
+std::string battleSideToString(BattleSide s)
+{
+	switch (s)
+	{
+		case BattleSide::NONE:        return "NONE";
+		case BattleSide::INVALID:     return "INVALID";
+		case BattleSide::ALL_KNOWING: return "ALL_KNOWING";
+		case BattleSide::ATTACKER:    return "ATTACKER";
+		case BattleSide::DEFENDER:    return "DEFENDER";
+		default:                      return "INVALID";
+	}
+}
+
+BattleSide battleSideFromString(const std::string & s)
+{
+	if (s == "NONE")        return BattleSide::NONE;
+	if (s == "INVALID")     return BattleSide::INVALID;
+	if (s == "ALL_KNOWING") return BattleSide::ALL_KNOWING;
+	if (s == "ATTACKER")    return BattleSide::ATTACKER;
+	if (s == "DEFENDER")    return BattleSide::DEFENDER;
+	return BattleSide::INVALID;
+}
+
+std::string actionTypeToString(EActionType t)
+{
+	switch (t)
+	{
+		case EActionType::NO_ACTION:        return "NO_ACTION";
+		case EActionType::END_TACTIC_PHASE: return "END_TACTIC_PHASE";
+		case EActionType::RETREAT:          return "RETREAT";
+		case EActionType::SURRENDER:        return "SURRENDER";
+		case EActionType::HERO_SPELL:       return "HERO_SPELL";
+		case EActionType::WALK:             return "WALK";
+		case EActionType::WAIT:             return "WAIT";
+		case EActionType::DEFEND:           return "DEFEND";
+		case EActionType::WALK_AND_ATTACK:  return "WALK_AND_ATTACK";
+		case EActionType::SHOOT:            return "SHOOT";
+		case EActionType::CATAPULT:         return "CATAPULT";
+		case EActionType::MONSTER_SPELL:    return "MONSTER_SPELL";
+		case EActionType::BAD_MORALE:       return "BAD_MORALE";
+		case EActionType::STACK_HEAL:       return "STACK_HEAL";
+		case EActionType::WALK_AND_CAST:    return "WALK_AND_CAST";
+		default:                            return "NO_ACTION";
+	}
+}
+
+EActionType actionTypeFromString(const std::string & s)
+{
+	if (s == "NO_ACTION")        return EActionType::NO_ACTION;
+	if (s == "END_TACTIC_PHASE") return EActionType::END_TACTIC_PHASE;
+	if (s == "RETREAT")          return EActionType::RETREAT;
+	if (s == "SURRENDER")        return EActionType::SURRENDER;
+	if (s == "HERO_SPELL")       return EActionType::HERO_SPELL;
+	if (s == "WALK")             return EActionType::WALK;
+	if (s == "WAIT")             return EActionType::WAIT;
+	if (s == "DEFEND")           return EActionType::DEFEND;
+	if (s == "WALK_AND_ATTACK")  return EActionType::WALK_AND_ATTACK;
+	if (s == "SHOOT")            return EActionType::SHOOT;
+	if (s == "CATAPULT")         return EActionType::CATAPULT;
+	if (s == "MONSTER_SPELL")    return EActionType::MONSTER_SPELL;
+	if (s == "BAD_MORALE")       return EActionType::BAD_MORALE;
+	if (s == "STACK_HEAL")       return EActionType::STACK_HEAL;
+	if (s == "WALK_AND_CAST")    return EActionType::WALK_AND_CAST;
+	return EActionType::NO_ACTION;
+}
+
+JsonNode destinationInfoToJson(const BattleAction::DestinationInfo & d)
+{
+	JsonNode n;
+	n["unitValue"].Integer() = static_cast<int64_t>(d.unitValue);
+	// BattleHex serializes as a single si16 — expose just that integer.
+	n["hexValue"].Integer() = static_cast<int64_t>(d.hexValue.toInt());
+	return n;
+}
+
+BattleAction::DestinationInfo destinationInfoFromJson(const JsonNode & json)
+{
+	BattleAction::DestinationInfo d;
+	if (json["unitValue"].isNumber())
+		d.unitValue = static_cast<int32_t>(json["unitValue"].Integer());
+	if (json["hexValue"].isNumber())
+		d.hexValue = BattleHex(static_cast<si16>(json["hexValue"].Integer()));
+	return d;
+}
+
+JsonNode battleActionToJson(const BattleAction & ba)
+{
+	JsonNode n;
+	n["side"].String() = battleSideToString(ba.side);
+	n["stackNumber"].Integer() = static_cast<int64_t>(ba.stackNumber);
+	n["actionType"].String() = actionTypeToString(ba.actionType);
+	n["spell"].Integer() = static_cast<int64_t>(ba.spell.getNum());
+
+	JsonNode & target = n["target"];
+	target.Vector();
+	for (const auto & d : ba.target)
+		target.Vector().push_back(destinationInfoToJson(d));
+
+	return n;
+}
+
+BattleAction battleActionFromJson(const JsonNode & json)
+{
+	BattleAction ba;
+	if (json["side"].isString())
+		ba.side = battleSideFromString(json["side"].String());
+	if (json["stackNumber"].isNumber())
+		ba.stackNumber = static_cast<ui32>(json["stackNumber"].Integer());
+	if (json["actionType"].isString())
+		ba.actionType = actionTypeFromString(json["actionType"].String());
+	if (json["spell"].isNumber())
+		ba.spell = SpellID(static_cast<int32_t>(json["spell"].Integer()));
+
+	if (json["target"].isVector())
+	{
+		for (const auto & step : json["target"].Vector())
+			ba.target.push_back(destinationInfoFromJson(step));
+	}
+	return ba;
+}
+} // namespace
+
+class MakeActionCodec final : public PackCodec
+{
+public:
+	std::string typeName() const override { return "MakeAction"; }
+
+	bool matches(const CPack & pack) const override
+	{
+		return dynamic_cast<const MakeAction *>(&pack) != nullptr;
+	}
+
+	std::unique_ptr<CPack> fromJson(const JsonNode & json) const override
+	{
+		auto pack = std::make_unique<MakeAction>();
+		homamweb::shared::readServerPackBase(json, *pack);
+
+		if (json["ba"].isStruct())
+			pack->ba = battleActionFromJson(json["ba"]);
+
+		if (json["battleID"].isNumber())
+			pack->battleID = BattleID(static_cast<int32_t>(json["battleID"].Integer()));
+
+		return pack;
+	}
+
+	void toJson(const CPack & pack, JsonNode & out) const override
+	{
+		const auto & p = dynamic_cast<const MakeAction &>(pack);
+
+		out["type"].String() = typeName();
+		homamweb::shared::writeServerPackBase(p, out);
+
+		out["ba"] = battleActionToJson(p.ba);
+		out["battleID"].Integer() = static_cast<int64_t>(p.battleID.getNum());
+	}
+};
+
+REGISTER_PACK_CODEC(MakeActionCodec)
