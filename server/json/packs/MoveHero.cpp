@@ -11,9 +11,9 @@
 #include "../PackCodec.h"
 #include "../PackCodecRegistry.h"
 #include "../shared/CPackForServerBase.h"
+#include "../shared/Int3.h"
 
 #include "../../../lib/networkPacks/PacksForServer.h"
-#include "../../../lib/int3.h"
 #include "../../../lib/constants/EntityIdentifiers.h"
 
 namespace
@@ -43,24 +43,6 @@ EPathfindingLayer layerFromString(const std::string & s)
 	if (s == "AUTO")   return EPathfindingLayer(EPathfindingLayer::AUTO);
 	return EPathfindingLayer(EPathfindingLayer::WRONG);
 }
-
-JsonNode int3ToJson(const int3 & p)
-{
-	JsonNode out;
-	out["x"].Integer() = static_cast<int64_t>(p.x);
-	out["y"].Integer() = static_cast<int64_t>(p.y);
-	out["z"].Integer() = static_cast<int64_t>(p.z);
-	return out;
-}
-
-int3 int3FromJson(const JsonNode & json)
-{
-	int3 out;
-	if (json["x"].isNumber()) out.x = static_cast<si32>(json["x"].Integer());
-	if (json["y"].isNumber()) out.y = static_cast<si32>(json["y"].Integer());
-	if (json["z"].isNumber()) out.z = static_cast<si32>(json["z"].Integer());
-	return out;
-}
 } // namespace
 
 class MoveHeroCodec final : public PackCodec
@@ -81,7 +63,7 @@ public:
 		if (json["path"].isVector())
 		{
 			for (const auto & step : json["path"].Vector())
-				pack->path.push_back(int3FromJson(step));
+				pack->path.push_back(homamweb::shared::int3FromJson(step));
 		}
 
 		if (json["layer"].isString())
@@ -106,7 +88,7 @@ public:
 		JsonNode & path = out["path"];
 		path.Vector();
 		for (const auto & step : p.path)
-			path.Vector().push_back(int3ToJson(step));
+			path.Vector().push_back(homamweb::shared::int3ToJson(step));
 
 		out["layer"].String() = layerToString(p.layer);
 		out["hid"].Integer() = static_cast<int64_t>(p.hid.getNum());
