@@ -27,6 +27,7 @@
 #include "../lib/pathfinder/PathfinderOptions.h"
 #include "queries/QueriesProcessor.h"
 #include "queries/CQuery.h"
+#include "processors/TurnOrderProcessor.h"
 #include "../lib/serializer/GameConnection.h"
 
 JsonAdapter::JsonAdapter(CVCMIServer & srv) : server(srv) {}
@@ -504,9 +505,10 @@ void JsonAdapter::enrichOutbound(const std::shared_ptr<GameConnection> & game, c
 		}
 	}
 
-	// LobbyStartGame echo: tell THIS connection which player slots it owns.
-	// Each connection sees a different list because the engine assigns slots
-	// per-connection during prepareToStartGame.
+	// LobbyStartGame echo: tell THIS connection which player slots it owns,
+	// plus the current turn state (matters for LOAD_GAME — the engine doesn't
+	// re-broadcast NewTurn/PlayerStartsTurn after load, so without these
+	// fields a freshly-loaded client doesn't know whose turn it is).
 	if (dynamic_cast<const LobbyStartGame *>(&pack))
 	{
 		const auto players = server.getAllClientPlayers(game->connectionID);
@@ -517,6 +519,38 @@ void JsonAdapter::enrichOutbound(const std::shared_ptr<GameConnection> & game, c
 			JsonNode entry;
 			entry.Integer() = color.getNum();
 			arr.Vector().push_back(entry);
+		}
+
+		// Current turn-state. server.gh->gs->day exists by the time
+		// LobbyStartGame echoes (gs has been loaded). actingPlayers is the
+		// set of players currently making turns — single for normal play,
+		// multiple under simturns. TurnOrderProcessor's set is private, so
+		// we probe each PlayerColor via isPlayerMakingTurn().
+		try
+		{
+			if (server.gh && server.gh->gs)
+			{
+				out["day"].Integer() = server.gh->gs->day;
+				JsonNode & acting = out["actingPlayers"];
+				acting.Vector();
+				if (server.gh->turnOrder)
+				{
+					for (int i = 0; i < PlayerColor::PLAYER_LIMIT_I; i++)
+					{
+						const PlayerColor pc(i);
+						if (server.gh->turnOrder->isPlayerMakingTurn(pc))
+						{
+							JsonNode entry;
+							entry.Integer() = i;
+							acting.Vector().push_back(entry);
+						}
+					}
+				}
+			}
+		}
+		catch (const std::exception & e)
+		{
+			logNetwork->warn("[JsonAdapter] LobbyStartGame turn-state enrichment threw: %s", e.what());
 		}
 	}
 
