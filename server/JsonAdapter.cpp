@@ -370,25 +370,39 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 					"VISIT", "BLOCKING_VISIT",
 					"TELEPORT_NORMAL", "TELEPORT_BLOCKING_VISIT", "TELEPORT_BATTLE",
 				};
+				static const char * layerNames[] = {
+					"WRONG", "AUTO", "LAND", "SAIL", "WATER", "AIR",
+				};
+				// Path nodes use visitablePos coordinates (the tile the
+				// PATHFINDER reasons about). The engine's MoveHero handler
+				// expects coordinates in the hero's actual `pos` space, which
+				// differs by 1 in some axis for objects with a footprint > 1
+				// (heroes, towns, boats). Convert per upstream's
+				// HeroMovementController: int3 coord = h->convertFromVisitablePos(node.coord).
 				for (auto it = path.nodes.rbegin(); it != path.nodes.rend(); ++it)
 				{
-					if (it->coord == hero->pos) continue; // skip start
+					if (it->coord == hero->visitablePos()) continue; // skip start (matches upstream)
+					int3 movePos = hero->convertFromVisitablePos(it->coord);
 					JsonNode entry;
-					entry["x"].Integer() = it->coord.x;
-					entry["y"].Integer() = it->coord.y;
-					entry["z"].Integer() = it->coord.z;
+					entry["x"].Integer() = movePos.x;
+					entry["y"].Integer() = movePos.y;
+					entry["z"].Integer() = movePos.z;
+					// Also expose the visitable position so agents can correlate
+					// with object positions (e.g., the tile a monster guards
+					// from is its visitablePos, not its convertFromVisitablePos).
+					entry["visitablePos"]["x"].Integer() = it->coord.x;
+					entry["visitablePos"]["y"].Integer() = it->coord.y;
+					entry["visitablePos"]["z"].Integer() = it->coord.z;
 					entry["turn"].Integer() = it->turns;
 					entry["movePointsAfter"].Integer() = it->moveRemains;
-					// EPathNodeAction tells the agent whether this step is a
-					// normal move (hero transits) or a special interaction
-					// (BLOCKING_VISIT = visit object without stepping onto its
-					// tile; hero stays put; subsequent tiles may not be
-					// adjacent to actual hero position). Critical for goto's
-					// step-by-step execution.
 					const int actionIdx = static_cast<int>(it->action);
 					const int actionMax = static_cast<int>(sizeof(actionNames) / sizeof(actionNames[0]));
 					entry["action"].String() = (actionIdx >= 0 && actionIdx < actionMax)
 						? actionNames[actionIdx] : "UNKNOWN";
+					const int layerIdx = static_cast<int>(it->layer);
+					const int layerMax = static_cast<int>(sizeof(layerNames) / sizeof(layerNames[0]));
+					entry["layer"].String() = (layerIdx >= 0 && layerIdx < layerMax)
+						? layerNames[layerIdx] : "WRONG";
 					tiles.Vector().push_back(entry);
 				}
 			}
