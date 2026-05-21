@@ -1250,6 +1250,12 @@ void CVCMIServer::applyPack(CPackForClient & pack)
 void CVCMIServer::sendPack(CPackForClient & pack, GameConnectionID connectionID)
 {
 	for (const auto & c : activeConnections)
-		if (c->connectionID == connectionID)
+	{
+		if (c->connectionID != connectionID)
+			continue;
+		if (jsonAdapter && jsonAdapter->ownsConnection(c))
+			jsonAdapter->sendPackToJsonClient(c, pack);
+		else
 			c->sendPack(pack);
+	}
 }

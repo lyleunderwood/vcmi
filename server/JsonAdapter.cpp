@@ -10,12 +10,14 @@
 
 #include "JsonAdapter.h"
 #include "CVCMIServer.h"
+#include "CGameHandler.h"
 #include "json/PackCodec.h"
 #include "json/PackCodecRegistry.h"
 
 #include "../lib/json/JsonNode.h"
 #include "../lib/network/NetworkInterface.h"
 #include "../lib/networkPacks/PacksForLobby.h"
+#include "../lib/networkPacks/PacksForServer.h"
 #include "../lib/serializer/GameConnection.h"
 
 JsonAdapter::JsonAdapter(CVCMIServer & srv) : server(srv) {}
@@ -90,11 +92,25 @@ void JsonAdapter::onPacketReceived(const std::shared_ptr<INetworkConnection> & c
 			throw std::runtime_error("No codec registered for pack type: " + packType);
 
 		std::unique_ptr<CPack> rawPack = codec->fromJson(root);
-		auto * lobbyPack = dynamic_cast<CPackForLobby *>(rawPack.get());
-		if (lobbyPack == nullptr)
-			throw std::runtime_error("Pack type '" + packType + "' is not a CPackForLobby");
 
-		server.handleReceivedPack(game, *lobbyPack);
+		// Dispatch by pack family, matching the binary-peer flow in
+		// CVCMIServer::onPacketReceived (which uses ICPackVisitor).
+		if (auto * lobbyPack = dynamic_cast<CPackForLobby *>(rawPack.get()))
+		{
+			server.handleReceivedPack(game, *lobbyPack);
+		}
+		else if (auto * serverPack = dynamic_cast<CPackForServer *>(rawPack.get()))
+		{
+			if (server.gh)
+				server.gh->handleReceivedPack(game->connectionID, *serverPack);
+			else
+				throw std::runtime_error("Pack '" + packType + "' is a CPackForServer but no CGameHandler is running yet (still in lobby?)");
+		}
+		else
+		{
+			throw std::runtime_error("Pack type '" + packType + "' is neither CPackForLobby nor CPackForServer");
+		}
+
 		logNetwork->info("[JsonAdapter] dispatch complete: type='%s'", packType);
 	}
 	catch (const std::exception & e)
