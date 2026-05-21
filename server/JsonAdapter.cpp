@@ -222,6 +222,68 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperListHeroes")
+	{
+		// Returns heroes the engine currently knows about. Useful at game start
+		// where the wrapper only learns about heroes via HeroVisit packs, which
+		// fire only for the active player's heroes initially. This lets the
+		// joining player see RED's hero (and vice versa) before turn cycles.
+		JsonNode resp;
+		resp["type"].String() = "WrapperHeroes";
+		JsonNode & arr = resp["heroes"];
+		arr.Vector();
+		for (const auto & heroId : server.gh->gs->getMap().getHeroesOnMap())
+		{
+			const auto * h = server.gh->gs->getHero(heroId);
+			if (!h) continue;
+			JsonNode entry;
+			entry["id"].Integer() = h->id.getNum();
+			if (h->getOwner().isValidPlayer())
+				entry["owner"].Integer() = h->getOwner().getNum();
+			entry["position"]["x"].Integer() = h->pos.x;
+			entry["position"]["y"].Integer() = h->pos.y;
+			entry["position"]["z"].Integer() = h->pos.z;
+			entry["movePoints"].Integer() = h->movementPointsRemaining();
+			arr.Vector().push_back(entry);
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperPopQuery")
+	{
+		// Hard escape: forcibly remove a query from the QueriesProcessor.
+		// Used when a player disconnects mid-query (especially CBattleQuery)
+		// and the game is stuck waiting on them. Pops the query unconditionally.
+		// NOT a clean way to end battles — the engine may be in an
+		// inconsistent state afterward — but it unblocks games that would
+		// otherwise be lost. Treat as an admin override.
+		const int qidInt = static_cast<int>(req["queryID"].Integer());
+		JsonNode resp;
+		resp["type"].String() = "WrapperPopQueryResult";
+		resp["queryID"].Integer() = qidInt;
+		auto q = server.gh->queries->getQuery(QueryID(qidInt));
+		if (!q)
+		{
+			resp["found"].Bool() = false;
+			sendRawJson(sock, resp);
+			return;
+		}
+		resp["found"].Bool() = true;
+		resp["description"].String() = q->toString();
+		try {
+			server.gh->queries->popQuery(q);
+			resp["popped"].Bool() = true;
+		}
+		catch (const std::exception & e)
+		{
+			resp["popped"].Bool() = false;
+			resp["error"].String() = e.what();
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperListQueries")
 	{
 		// Surface all pending engine-side queries (battle, dialog, level-up, etc.)
@@ -303,6 +365,11 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				resp["movePointsAfter"].Integer() = destNode.moveRemains;
 				JsonNode & tiles = resp["tiles"];
 				tiles.Vector();
+				static const char * actionNames[] = {
+					"UNKNOWN", "EMBARK", "DISEMBARK", "NORMAL", "BATTLE",
+					"VISIT", "BLOCKING_VISIT",
+					"TELEPORT_NORMAL", "TELEPORT_BLOCKING_VISIT", "TELEPORT_BATTLE",
+				};
 				for (auto it = path.nodes.rbegin(); it != path.nodes.rend(); ++it)
 				{
 					if (it->coord == hero->pos) continue; // skip start
@@ -312,6 +379,16 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 					entry["z"].Integer() = it->coord.z;
 					entry["turn"].Integer() = it->turns;
 					entry["movePointsAfter"].Integer() = it->moveRemains;
+					// EPathNodeAction tells the agent whether this step is a
+					// normal move (hero transits) or a special interaction
+					// (BLOCKING_VISIT = visit object without stepping onto its
+					// tile; hero stays put; subsequent tiles may not be
+					// adjacent to actual hero position). Critical for goto's
+					// step-by-step execution.
+					const int actionIdx = static_cast<int>(it->action);
+					const int actionMax = static_cast<int>(sizeof(actionNames) / sizeof(actionNames[0]));
+					entry["action"].String() = (actionIdx >= 0 && actionIdx < actionMax)
+						? actionNames[actionIdx] : "UNKNOWN";
 					tiles.Vector().push_back(entry);
 				}
 			}
