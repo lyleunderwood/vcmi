@@ -6,18 +6,15 @@
  * C++ pack definition:  vcmi/lib/networkPacks/PacksForLobby.h
  * TypeScript twin:      wrapper/src/codecs/lobby/LobbyStartGame.ts
  *
- * NOTE: `initializedStartInfo` (std::shared_ptr<StartInfo>) and
- * `initializedGameState` (std::shared_ptr<CGameState>) are complex VCMI
- * engine types whose full field models are not in scope for this codec.
- * They are treated as opaque JSON blobs on the wire: toJson emits an empty
- * struct placeholder when the pointer is non-null and omits the field when
- * the pointer is null; fromJson leaves the pointers as nullptr. A future
- * codec pass should promote StartInfo and CGameState to shared codecs.
+ * `initializedStartInfo` and `initializedGameState` use the shared opaque
+ * helpers from shared/StartInfo.h. See that header for the phase-1
+ * lossiness note.
  */
 #include "StdInc.h"
 
 #include "../PackCodec.h"
 #include "../PackCodecRegistry.h"
+#include "../shared/StartInfo.h"
 
 #include "../../../lib/networkPacks/PacksForLobby.h"
 
@@ -34,10 +31,8 @@ public:
 	std::unique_ptr<CPack> fromJson(const JsonNode & json) const override
 	{
 		auto pack = std::make_unique<LobbyStartGame>();
-		// initializedStartInfo and initializedGameState are opaque on the
-		// wire; leave as nullptr. (Future work: deserialize from
-		// json["initializedStartInfo"] / json["initializedGameState"].)
-		(void)json;
+		pack->initializedStartInfo = homamweb::shared::opaqueStartInfoFromJson(json["initializedStartInfo"]);
+		pack->initializedGameState = homamweb::shared::opaqueGameStateFromJson(json["initializedGameState"]);
 		return pack;
 	}
 
@@ -47,13 +42,10 @@ public:
 
 		out["type"].String() = typeName();
 
-		if (p.initializedStartInfo)
-			out["initializedStartInfo"].Struct(); // opaque placeholder
-		// else: leave field absent / null
-
-		if (p.initializedGameState)
-			out["initializedGameState"].Struct(); // opaque placeholder
-		// else: leave field absent / null
+		if (auto si = homamweb::shared::opaqueStartInfoToJson(p.initializedStartInfo))
+			out["initializedStartInfo"] = *si;
+		if (auto gs = homamweb::shared::opaqueGameStateToJson(p.initializedGameState))
+			out["initializedGameState"] = *gs;
 	}
 };
 
