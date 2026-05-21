@@ -23,6 +23,8 @@
 #include "../lib/mapping/CMap.h"
 #include "../lib/mapping/TerrainTile.h"
 #include "../lib/mapObjects/CGHeroInstance.h"
+#include "../lib/pathfinder/CGPathNode.h"
+#include "../lib/pathfinder/PathfinderOptions.h"
 #include "../lib/serializer/GameConnection.h"
 
 JsonAdapter::JsonAdapter(CVCMIServer & srv) : server(srv) {}
@@ -214,6 +216,80 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		resp["width"].Integer() = map.width;
 		resp["height"].Integer() = map.height;
 		resp["levels"].Integer() = map.levels();
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperQueryPath")
+	{
+		const int heroId = static_cast<int>(req["heroId"].Integer());
+		const int dx = static_cast<int>(req["x"].Integer());
+		const int dy = static_cast<int>(req["y"].Integer());
+		const int dz = req["z"].isNumber() ? static_cast<int>(req["z"].Integer()) : 0;
+		const int3 dest(dx, dy, dz);
+
+		JsonNode resp;
+		resp["type"].String() = "WrapperPath";
+		resp["heroId"].Integer() = heroId;
+		resp["dest"]["x"].Integer() = dx;
+		resp["dest"]["y"].Integer() = dy;
+		resp["dest"]["z"].Integer() = dz;
+
+		const auto * hero = server.gh->gs->getHero(ObjectInstanceID(heroId));
+		if (!hero)
+		{
+			resp["reachable"].Bool() = false;
+			resp["error"].String() = "hero not found";
+			sendRawJson(sock, resp);
+			return;
+		}
+		resp["start"]["x"].Integer() = hero->pos.x;
+		resp["start"]["y"].Integer() = hero->pos.y;
+		resp["start"]["z"].Integer() = hero->pos.z;
+
+		try
+		{
+			CPathsInfo pathsInfo(int3(map.width, map.height, map.levels()), hero);
+			auto config = std::make_shared<SingleHeroPathfinderConfig>(pathsInfo, server.gh->gameInfo(), hero);
+			// Default pathfinder stops at guards (treats them as endpoints).
+			// For wrapper queries we want to see the full path so the agent can
+			// see what they'd cross. The agent decides whether to actually step.
+			config->options.ignoreGuards = true;
+			server.gh->gs->calculatePaths(config);
+
+			CGPath path;
+			const bool reachable = pathsInfo.getPath(path, dest);
+			logNetwork->info("[Pathfinder] hero=%d at (%d,%d,%d) -> (%d,%d,%d): reachable=%d, nodes=%d",
+				heroId, hero->pos.x, hero->pos.y, hero->pos.z, dx, dy, dz,
+				reachable ? 1 : 0, (int)path.nodes.size());
+			resp["reachable"].Bool() = reachable;
+			if (reachable && !path.nodes.empty())
+			{
+				// path.nodes is in reverse (dest -> start); front() is destination.
+				const auto & destNode = path.nodes.front();
+				resp["cost"].Float() = destNode.cost;
+				resp["turnsToReach"].Integer() = destNode.turns;
+				resp["movePointsAfter"].Integer() = destNode.moveRemains;
+				JsonNode & tiles = resp["tiles"];
+				tiles.Vector();
+				for (auto it = path.nodes.rbegin(); it != path.nodes.rend(); ++it)
+				{
+					if (it->coord == hero->pos) continue; // skip start
+					JsonNode entry;
+					entry["x"].Integer() = it->coord.x;
+					entry["y"].Integer() = it->coord.y;
+					entry["z"].Integer() = it->coord.z;
+					entry["turn"].Integer() = it->turns;
+					entry["movePointsAfter"].Integer() = it->moveRemains;
+					tiles.Vector().push_back(entry);
+				}
+			}
+		}
+		catch (const std::exception & e)
+		{
+			resp["reachable"].Bool() = false;
+			resp["error"].String() = std::string("pathfinder failed: ") + e.what();
+		}
 		sendRawJson(sock, resp);
 		return;
 	}
