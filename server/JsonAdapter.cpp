@@ -20,6 +20,8 @@
 #include "../lib/networkPacks/PacksForServer.h"
 #include "../lib/networkPacks/PacksForClient.h"
 #include "../lib/gameState/CGameState.h"
+#include "../lib/mapping/CMap.h"
+#include "../lib/mapping/TerrainTile.h"
 #include "../lib/mapObjects/CGHeroInstance.h"
 #include "../lib/serializer/GameConnection.h"
 
@@ -158,10 +160,13 @@ void JsonAdapter::sendPackToJsonClientImpl(const std::shared_ptr<GameConnection>
 	}
 
 	// Pack-specific outbound enrichment: decorate the JSON with engine-state info
-	// the codec can't access (codecs are stateless). Keeps codec contract clean
-	// while letting wrapper clients learn things the binary protocol carries
-	// implicitly via gameState references.
-	enrichOutbound(game, pack, out);
+	// the codec can't access (codecs are stateless). Wrapped defensively so a
+	// throw can't abort the pack send — wrapper clients miss enrichment but
+	// still see the base pack.
+	try { enrichOutbound(game, pack, out); }
+	catch (const std::exception & e) {
+		logNetwork->warn("[JsonAdapter] enrichOutbound threw: %s", e.what());
+	}
 
 	std::string body = out.toCompactString();
 	std::vector<std::byte> payload(body.size());
@@ -204,6 +209,72 @@ void JsonAdapter::enrichOutbound(const std::shared_ptr<GameConnection> & game, c
 			JsonNode entry;
 			entry.Integer() = color.getNum();
 			arr.Vector().push_back(entry);
+		}
+	}
+
+	// FoWChange: when tiles get revealed, attach terrain + top-object info
+	// for each tile. This is how the wrapper builds up a tile-by-tile picture
+	// of the map as the player explores. Wrapped in try/catch since the
+	// reveal can fire very early in game-start and gameState may not be fully
+	// settled yet — better to lose enrichment than abort the whole pack.
+	if (auto * fow = dynamic_cast<const FoWChange *>(&pack))
+	{
+		logNetwork->info("[JsonAdapter] enriching FoWChange (tiles=%d, gh=%d, gs=%d)",
+			(int)fow->tiles.size(), server.gh ? 1 : 0, (server.gh && server.gh->gs) ? 1 : 0);
+		try
+		{
+			if (server.gh && server.gh->gs)
+			{
+				const auto & map = server.gh->gs->getMap();
+				JsonNode & arr = out["tileInfo"];
+				arr.Vector();
+				for (const int3 & t : fow->tiles)
+				{
+					if (!map.isInTheMap(t)) continue;
+					const TerrainTile & tile = map.getTile(t);
+					JsonNode entry;
+					entry["x"].Integer() = t.x;
+					entry["y"].Integer() = t.y;
+					entry["z"].Integer() = t.z;
+					entry["terrain"].Integer() = tile.getTerrainID().getNum();
+					entry["blocked"].Bool() = tile.blocked();
+					entry["visitable"].Bool() = tile.visitable();
+					const auto topObj = tile.topVisitableObj();
+					if (topObj.getNum() >= 0)
+					{
+						entry["topObject"].Integer() = topObj.getNum();
+						// Object type — agents need this to distinguish
+						// monsters, towns, mines, artifacts, resource piles…
+						if (const auto * obj = server.gh->gs->getObj(topObj))
+						{
+							entry["objType"].Integer() = obj->ID.getNum();
+							entry["objSubType"].Integer() = obj->subID.getNum();
+							if (obj->getOwner().isValidPlayer())
+								entry["objOwner"].Integer() = obj->getOwner().getNum();
+						}
+					}
+					// Guard zone: if a monster guards this tile, entering it
+					// triggers combat. Expose the guard's position so agents
+					// can avoid or knowingly engage.
+					const int3 guard = map.guardingCreaturePosition(t);
+					if (map.isInTheMap(guard))
+					{
+						JsonNode & g = entry["guardedBy"];
+						g.Struct();
+						g["x"].Integer() = guard.x;
+						g["y"].Integer() = guard.y;
+						g["z"].Integer() = guard.z;
+					}
+					arr.Vector().push_back(entry);
+				}
+			}
+		}
+		catch (const std::exception & e)
+		{
+			logNetwork->warn("[JsonAdapter] FoWChange enrichment failed: %s", e.what());
+			// Strip any partial enrichment to keep wire format consistent.
+			if (out.Struct().count("tileInfo"))
+				out.Struct().erase("tileInfo");
 		}
 	}
 }
