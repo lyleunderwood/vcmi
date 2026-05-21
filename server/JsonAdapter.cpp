@@ -161,7 +161,7 @@ void JsonAdapter::sendPackToJsonClientImpl(const std::shared_ptr<GameConnection>
 	// the codec can't access (codecs are stateless). Keeps codec contract clean
 	// while letting wrapper clients learn things the binary protocol carries
 	// implicitly via gameState references.
-	enrichOutbound(pack, out);
+	enrichOutbound(game, pack, out);
 
 	std::string body = out.toCompactString();
 	std::vector<std::byte> payload(body.size());
@@ -170,7 +170,7 @@ void JsonAdapter::sendPackToJsonClientImpl(const std::shared_ptr<GameConnection>
 	sock->sendPacket(payload); // NetworkConnection::sendPacket prepends the 4-byte size header itself
 }
 
-void JsonAdapter::enrichOutbound(const CPack & pack, JsonNode & out)
+void JsonAdapter::enrichOutbound(const std::shared_ptr<GameConnection> & game, const CPack & pack, JsonNode & out)
 {
 	// HeroVisit: add the hero's current position. The engine emits these at
 	// game start for each starting hero (with `starting=true`), which is how
@@ -188,6 +188,22 @@ void JsonAdapter::enrichOutbound(const CPack & pack, JsonNode & out)
 				pos["y"].Integer() = hero->pos.y;
 				pos["z"].Integer() = hero->pos.z;
 			}
+		}
+	}
+
+	// LobbyStartGame echo: tell THIS connection which player slots it owns.
+	// Each connection sees a different list because the engine assigns slots
+	// per-connection during prepareToStartGame.
+	if (dynamic_cast<const LobbyStartGame *>(&pack))
+	{
+		const auto players = server.getAllClientPlayers(game->connectionID);
+		JsonNode & arr = out["yourPlayers"];
+		arr.Vector();
+		for (PlayerColor color : players)
+		{
+			JsonNode entry;
+			entry.Integer() = color.getNum();
+			arr.Vector().push_back(entry);
 		}
 	}
 }

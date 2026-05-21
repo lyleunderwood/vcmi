@@ -557,7 +557,12 @@ void CVCMIServer::clientDisconnected(std::shared_ptr<GameConnection> connection)
 	if(disconnectedPlayerIds.empty())
 		logNetwork->info("Connection %d disconnected from lobby with no mapped player names", static_cast<int>(connection->connectionID));
 
-	if(activeConnections.empty() || hostClientId == connection->connectionID)
+	// homam-web fork: only shutdown when no clients are connected. Upstream
+	// also shuts down on host disconnect, but for our async-play model we want
+	// games to survive client disconnects (clients may reconnect later via the
+	// JSON adapter's `join` op). The host role is effectively held by the
+	// wrapper, not any individual TCP client.
+	if(activeConnections.empty())
 	{
 		setState(EServerState::SHUTDOWN);
 		return;

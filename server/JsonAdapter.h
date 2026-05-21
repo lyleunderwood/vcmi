@@ -49,6 +49,7 @@ private:
 	/// Shared body for the typed overloads above — dispatches via the registry.
 	void sendPackToJsonClientImpl(const std::shared_ptr<GameConnection> & game, CPack & pack);
 	/// Decorate outbound JSON with engine-state info the codec can't access
-	/// (codecs are stateless). E.g. hero positions for HeroVisit.
-	void enrichOutbound(const CPack & pack, JsonNode & out);
+	/// (codecs are stateless). E.g. hero positions for HeroVisit, controlled
+	/// player slots for LobbyStartGame.
+	void enrichOutbound(const std::shared_ptr<GameConnection> & game, const CPack & pack, JsonNode & out);
 };
