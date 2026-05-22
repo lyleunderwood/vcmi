@@ -1229,6 +1229,14 @@ bool CVCMIServer::hasPlayerAt(PlayerColor player, GameConnectionID connectionID)
 	return vstd::contains(getAllClientPlayers(connectionID), player);
 }
 
+GameConnectionID CVCMIServer::getConnectionForPlayer(PlayerColor player) const
+{
+	for(const auto & connection : activeConnections)
+		if(vstd::contains(getAllClientPlayers(connection->connectionID), player))
+			return connection->connectionID;
+	return GameConnectionID::INVALID;
+}
+
 bool CVCMIServer::hasBothPlayersAtSameConnection(PlayerColor left, PlayerColor right) const
 {
 	for (const auto & c : activeConnections)

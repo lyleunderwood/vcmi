@@ -6,6 +6,7 @@ set(vcmiservercommon_SRCS
 		battles/BattleProcessor.cpp
 		battles/BattleResultProcessor.cpp
 		battles/ServerBattleAI.cpp
+		ServerAdventureAI.cpp
 
 		queries/BattleQueries.cpp
 		queries/CQuery.cpp
@@ -46,6 +47,7 @@ set(vcmiservercommon_HEADERS
 		battles/BattleProcessor.h
 		battles/BattleResultProcessor.h
 		battles/ServerBattleAI.h
+		ServerAdventureAI.h
 
 		queries/BattleQueries.h
 		queries/CQuery.h

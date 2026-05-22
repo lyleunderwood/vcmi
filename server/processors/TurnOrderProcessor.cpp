@@ -14,6 +14,7 @@
 #include "../queries/QueriesProcessor.h"
 #include "../queries/MapQueries.h"
 #include "../CGameHandler.h"
+#include "../ServerAdventureAI.h"
 #include "../CVCMIServer.h"
 
 #include "../../lib/CPlayerState.h"
@@ -311,12 +312,16 @@ void TurnOrderProcessor::doStartPlayerTurn(PlayerColor which)
 
 	// homam-web fork: headless has no adventure AI (VCMI delegates it to
 	// clients). An AI player's turn would otherwise sit active forever and hang
-	// the day cycle — the wrapper used to end these manually, which broke when
-	// the controlling agent fell behind. Auto-pass them server-side: a
-	// non-human player immediately ends its (empty) turn. Guarded by
-	// hasHumanInGame() so an all-AI endgame can't spin days infinitely.
+	// the day cycle. Two paths for a non-human player (gated by hasHumanInGame
+	// so an all-AI endgame can't spin days infinitely):
+	//   1. A server-hosted adventure AI drives the turn (ServerAdventureAI).
+	//      With EmptyAI this still just ends the turn; Nullkiller2 will play it.
+	//   2. Fallback: bare auto-pass (immediately end the empty turn).
 	if (!isHuman && hasHumanInGame())
-		onPlayerEndsTurn(which);
+	{
+		if (!gameHandler->adventureAI->driveTurn(which, QueryID::NONE))
+			onPlayerEndsTurn(which);
+	}
 }
 
 bool TurnOrderProcessor::hasHumanInGame() const

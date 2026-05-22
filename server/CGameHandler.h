@@ -41,6 +41,7 @@ struct NewStructures;
 VCMI_LIB_NAMESPACE_END
 
 class HeroPoolProcessor;
+class ServerAdventureAI;
 class CVCMIServer;
 class CBaseForGHApply;
 class PlayerMessageProcessor;
@@ -72,6 +73,7 @@ public:
 	std::unique_ptr<GameRandomizer> randomizer;
 	std::unique_ptr<StatisticDataSet> statistics;
 	std::unique_ptr<SpellCastEnvironment> spellEnv;
+	std::unique_ptr<ServerAdventureAI> adventureAI; // homam-web fork: hosts AI-player turns
 	std::shared_ptr<CGameState> gs;
 
 	//use enums as parameters, because doMove(sth, true, false, true) is not readable

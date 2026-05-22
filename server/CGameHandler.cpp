@@ -19,6 +19,7 @@
 #include "processors/NewTurnProcessor.h"
 #include "processors/PlayerMessageProcessor.h"
 #include "processors/TurnOrderProcessor.h"
+#include "ServerAdventureAI.h"
 #include "queries/QueriesProcessor.h"
 #include "queries/MapQueries.h"
 #include "queries/VisitQueries.h"
@@ -548,6 +549,7 @@ CGameHandler::CGameHandler(IGameServer & server)
 	, newTurnProcessor(std::make_unique<NewTurnProcessor>(this))
 	, statistics(std::make_unique<StatisticDataSet>())
 	, spellEnv(std::make_unique<ServerSpellCastEnvironment>(this))
+	, adventureAI(std::make_unique<ServerAdventureAI>(this)) // homam-web fork
 	, playerMessages(std::make_unique<PlayerMessageProcessor>(this))
 	, QID(1)
 	, complainNoCreatures("No creatures to split")
@@ -772,6 +774,10 @@ void CGameHandler::start(bool resume)
 		for(const auto & player : gameState().players)
 			turnTimerHandler->onGameplayStart(player.first);
 	}
+
+	// homam-web fork: install server-hosted AI for AI players (connections are
+	// assigned by now). They're driven from TurnOrderProcessor::doStartPlayerTurn.
+	adventureAI->installForAiPlayers();
 
 	turnOrder->onGameStarted();
 }

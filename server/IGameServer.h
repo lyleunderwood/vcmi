@@ -35,6 +35,9 @@ public:
 	virtual bool isPlayerHost(const PlayerColor & color) const = 0;
 	virtual bool hasPlayerAt(PlayerColor player, GameConnectionID connectionID) const = 0;
 	virtual bool hasBothPlayersAtSameConnection(PlayerColor left, PlayerColor right) const = 0;
+	/// homam-web fork: the connection that controls this player, or INVALID if
+	/// none. Used to route a server-hosted AI's command packs (ServerAdventureAI).
+	virtual GameConnectionID getConnectionForPlayer(PlayerColor player) const = 0;
 	virtual void applyPack(CPackForClient & pack) = 0;
 	virtual void sendPack(CPackForClient & pack, GameConnectionID connectionID) = 0;
 };
