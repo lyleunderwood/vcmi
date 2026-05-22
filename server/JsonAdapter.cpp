@@ -393,6 +393,18 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			sendRawJson(sock, resp);
 			return;
 		}
+		// Bounds-check the destination BEFORE pathfinding. getPath indexes the
+		// paths array by coordinate; an out-of-bounds dest (e.g. negative coords
+		// from a wrapper client scouting "off the edge") is an out-of-range
+		// access that SEGFAULTS the server (not a catchable C++ exception). This
+		// crashed a live game when an agent did `goto to=-3,1,0`.
+		if (!map.isInTheMap(dest))
+		{
+			resp["reachable"].Bool() = false;
+			resp["error"].String() = "destination out of map bounds";
+			sendRawJson(sock, resp);
+			return;
+		}
 		resp["start"]["x"].Integer() = hero->pos.x;
 		resp["start"]["y"].Integer() = hero->pos.y;
 		resp["start"]["z"].Integer() = hero->pos.z;
