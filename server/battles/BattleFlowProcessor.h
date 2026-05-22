@@ -62,6 +62,11 @@ class BattleFlowProcessor : boost::noncopyable
 	void makeStackDoNothing(const CBattleInfoCallback & battle, const CStack * next);
 	bool makeAutomaticAction(const CBattleInfoCallback & battle, const CStack * stack, const BattleAction & ba); //used when action is taken by stack without volition of player (eg. unguided catapult attack)
 
+	// homam-web fork — SPIKE: drive a server-controlled (neutral) stack with a
+	// server-side battle AI. Returns true if it handled the stack (action
+	// applied), false to fall through to normal client-driven activation.
+	bool driveServerControlledStack(const CBattleInfoCallback & battle, const CStack * stack);
+
 public:
 	explicit BattleFlowProcessor(BattleProcessor * owner, CGameHandler * newGameHandler);
 

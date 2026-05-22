@@ -28,7 +28,38 @@
 #include "../../lib/spells/ISpellMechanics.h"
 #include "../../lib/spells/ObstacleCasterProxy.h"
 
+// homam-web fork — SPIKE: server-side battle AI for neutral stacks.
+#include "../../lib/callback/CDynLibHandler.h"
+#include "../../lib/callback/CBattleCallback.h"
+#include "../../lib/callback/CBattleGameInterface.h"
+#include "../../lib/battle/BattleAction.h"
+#include <vcmi/Environment.h>
+
 #include <vstd/RNG.h>
+
+// ─── SPIKE: server-side battle AI ──────────────────────────────────────────
+// Proof of concept for docs/server-side-ai.md Phase 1. A CBattleCallback
+// subclass that CAPTURES the AI's chosen action instead of sending it over a
+// network (the base class would sendRequest via an IClient). We then apply the
+// captured action through the server's existing makeAutomaticAction path — the
+// same one war machines use. No fake IClient needed: the overridden
+// battleMake* methods never touch the (null) IClient.
+namespace
+{
+class CapturingBattleCallback : public CBattleCallback
+{
+public:
+	std::optional<BattleAction> captured;
+
+	explicit CapturingBattleCallback(PlayerColor player)
+		: CBattleCallback(player, nullptr)
+	{}
+
+	void battleMakeUnitAction(const BattleID &, const BattleAction & a) override { captured = a; }
+	void battleMakeSpellAction(const BattleID &, const BattleAction & a) override { captured = a; }
+	void battleMakeTacticAction(const BattleID &, const BattleAction & a) override { captured = a; }
+};
+}
 
 BattleFlowProcessor::BattleFlowProcessor(BattleProcessor * owner, CGameHandler * newGameHandler)
 	: owner(owner)
@@ -346,11 +377,71 @@ void BattleFlowProcessor::activateNextStack(const CBattleInfoCallback & battle)
 		if (!tryMakeAutomaticAction(battle, next))
 		{
 			if(next->alive()) {
+				// homam-web fork — SPIKE: if this stack is owned by a player
+				// with no client to drive it (neutral monsters), play it with
+				// a server-side battle AI and continue the loop, instead of
+				// blocking forever waiting for a MakeAction that no client will
+				// send. See docs/server-side-ai.md.
+				if (driveServerControlledStack(battle, next))
+					continue;
+
 				setActiveStack(battle, next, BattleUnitTurnReason::TURN_QUEUE);
 				break;
 			}
 		}
 	}
+}
+
+// homam-web fork — SPIKE.
+bool BattleFlowProcessor::driveServerControlledStack(const CBattleInfoCallback & battle, const CStack * stack)
+{
+	// Phase 1 behavior: drive only NEUTRAL stacks (wandering monsters). The
+	// wrapper's own (human-controlled) stacks fall through to normal
+	// activation — once the neutral side has been played, the wrapper's stack
+	// becomes active and the wrapper can flee or (Phase 2) fight tactically.
+	// Flip this to drive-all for full server-side auto-resolve.
+	if (stack->unitOwner() != PlayerColor::NEUTRAL)
+		return false;
+
+	const BattleID battleID = battle.getBattle()->getBattleID();
+
+	// Make the stack active first so all observers (and the AI's view of the
+	// battle) agree on whose turn it is.
+	setActiveStack(battle, stack, BattleUnitTurnReason::TURN_QUEUE);
+
+	// Build a fresh capturing callback + StupidAI for this activation, scoped
+	// to the stack's OWNER so the AI evaluates "our vs enemy" correctly.
+	// Wasteful (re-created per stack turn) but fine for proving the mechanism;
+	// a real implementation would cache per (battleID, player).
+	const PlayerColor owningPlayer = stack->unitOwner();
+	auto cb = std::make_shared<CapturingBattleCallback>(owningPlayer);
+	cb->onBattleStarted(battle.getBattle());
+
+	auto ai = CDynLibHandler::getNewBattleAI("StupidAI");
+	if (!ai)
+	{
+		logGlobal->error("[ServerBattleAI] failed to load StupidAI");
+		return false;
+	}
+
+	// StupidAI makes no env-> calls; CGameHandler IS an Environment, so hand it
+	// over via a non-owning aliasing shared_ptr.
+	std::shared_ptr<Environment> env(std::shared_ptr<void>(), static_cast<Environment*>(gameHandler));
+	ai->initBattleInterface(env, cb);
+
+	ai->activeStack(battleID, stack);
+
+	if (!cb->captured)
+	{
+		logGlobal->warn("[ServerBattleAI] StupidAI produced no action for stack %d; defending", stack->unitId());
+		makeAutomaticAction(battle, stack, BattleAction::makeDefend(stack));
+		return true;
+	}
+
+	logGlobal->info("[ServerBattleAI] neutral stack %d acts (actionType=%d)",
+		stack->unitId(), static_cast<int>(cb->captured->actionType));
+	makeAutomaticAction(battle, stack, *cb->captured);
+	return true;
 }
 
 bool BattleFlowProcessor::tryMakeAutomaticAction(const CBattleInfoCallback & battle, const CStack * next)
