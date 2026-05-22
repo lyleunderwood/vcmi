@@ -152,20 +152,21 @@ void BattleFlowProcessor::onBattleStarted(const CBattleInfoCallback & battle)
 	}
 
 	// homam-web fork: if the tactics side is server-driven (no client will run
-	// its tactics), play the tactics phase here so the battle doesn't stall.
+	// its tactics), end the tactics phase here so the battle doesn't stall.
 	// Neutral monsters never get tactics, so this only fires under a drive-all
-	// (auto-resolve) policy; StupidAI ends the phase immediately.
+	// (auto-resolve) policy. We call onTacticsEnded directly rather than
+	// applying an END_TACTIC_PHASE via makeAutomaticBattleAction — the latter
+	// runs the action but NOT onActionMade (which is what normally triggers
+	// onTacticsEnded), so it would silently leave the battle stuck in tactics.
+	// StupidAI doesn't reposition during tactics anyway, so ending immediately
+	// is equivalent to what its yourTacticPhase would do.
 	const BattleSide tacticsSide = battle.battleGetTacticsSide();
 	const PlayerColor tacticsPlayer = battle.sideToPlayer(tacticsSide);
 	if (serverAI->shouldDrivePlayer(tacticsPlayer))
-	{
-		auto action = serverAI->computeTacticAction(battle, tacticsPlayer, battle.battleGetTacticDist());
-		if (action)
-			owner->makeAutomaticBattleAction(battle, *action);
-		else
-			onTacticsEnded(battle); // fallback: just end the phase
-	}
-	// else: a client-controlled side has tactics — wait for it (existing behavior).
+		onTacticsEnded(battle);
+	// else: a client-controlled side has tactics — wait for it (the wrapper
+	// ends tactics via the END_TACTIC_PHASE network action, which DOES trigger
+	// onActionMade -> onTacticsEnded).
 }
 
 void BattleFlowProcessor::trySummonGuardians(const CBattleInfoCallback & battle, const CStack * stack)

@@ -71,9 +71,6 @@ public:
 	/// std::nullopt if the AI produced nothing (caller should defend).
 	std::optional<BattleAction> computeAction(const CBattleInfoCallback & battle, const CStack * stack);
 
-	/// Run the AI's tactic-phase decision for a server-driven tactics side.
-	std::optional<BattleAction> computeTacticAction(const CBattleInfoCallback & battle, PlayerColor tacticsSidePlayer, int distance);
-
     /// Drop cached AI state for a finished battle.
 	void onBattleEnded(const BattleID & battleID);
 };

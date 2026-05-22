@@ -292,6 +292,21 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperSetAutoResolve")
+	{
+		// Toggle full server-side auto-resolve: when on, the server's battle AI
+		// plays EVERY side (including the wrapper's own), so battles resolve
+		// without tactical input. When off (default), only neutral stacks are
+		// driven and the wrapper plays its own side.
+		const bool enabled = req["enabled"].Bool();
+		server.gh->battleAutoResolve = enabled;
+		JsonNode resp;
+		resp["type"].String() = "WrapperAutoResolve";
+		resp["enabled"].Bool() = enabled;
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperPopQuery")
 	{
 		// Hard escape: forcibly remove a query from the QueriesProcessor.

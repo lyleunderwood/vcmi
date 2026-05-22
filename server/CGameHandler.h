@@ -57,6 +57,12 @@ class CGameHandler : public Environment, public IGameEventCallback
 	IGameServer & server;
 
 public:
+	// homam-web fork: when true, the server-side battle AI plays EVERY side
+	// (full auto-resolve), not just neutral stacks. Toggled by the wrapper via
+	// the WrapperSetAutoResolve query. Transient (not serialized) — a session
+	// preference, resets to false on load.
+	bool battleAutoResolve = false;
+
 	std::unique_ptr<HeroPoolProcessor> heroPool;
 	std::unique_ptr<BattleProcessor> battles;
 	std::unique_ptr<QueriesProcessor> queries;

@@ -52,7 +52,9 @@ bool ServerBattleAI::shouldDrive(const CBattleInfoCallback & battle, const CStac
 
 bool ServerBattleAI::shouldDrivePlayer(PlayerColor player) const
 {
-	if (driveAllSides)
+	// driveAllSides is a direct override (tests); battleAutoResolve is the
+	// wrapper-toggled session preference. Either makes us drive every side.
+	if (driveAllSides || gameHandler->battleAutoResolve)
 		return true;
 	return player == PlayerColor::NEUTRAL;
 }
@@ -104,18 +106,6 @@ std::optional<BattleAction> ServerBattleAI::computeAction(const CBattleInfoCallb
 		return std::nullopt;
 	}
 	return entry.cb->captured;
-}
-
-std::optional<BattleAction> ServerBattleAI::computeTacticAction(const CBattleInfoCallback & battle, PlayerColor tacticsSidePlayer, int distance)
-{
-	const BattleID battleID = battle.getBattle()->getBattleID();
-	PlayerAI & entry = getOrCreate(battle, tacticsSidePlayer);
-	if (!entry.ai)
-		return std::nullopt;
-
-	entry.cb->captured.reset();
-	entry.ai->yourTacticPhase(battleID, distance);
-	return entry.cb->captured; // typically an end-of-tactics action
 }
 
 void ServerBattleAI::onBattleEnded(const BattleID & battleID)
