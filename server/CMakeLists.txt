@@ -5,6 +5,7 @@ set(vcmiservercommon_SRCS
 		battles/BattleFlowProcessor.cpp
 		battles/BattleProcessor.cpp
 		battles/BattleResultProcessor.cpp
+		battles/ServerBattleAI.cpp
 
 		queries/BattleQueries.cpp
 		queries/CQuery.cpp
@@ -44,6 +45,7 @@ set(vcmiservercommon_HEADERS
 		battles/BattleFlowProcessor.h
 		battles/BattleProcessor.h
 		battles/BattleResultProcessor.h
+		battles/ServerBattleAI.h
 
 		queries/BattleQueries.h
 		queries/CQuery.h

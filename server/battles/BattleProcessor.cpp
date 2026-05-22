@@ -304,4 +304,6 @@ void BattleProcessor::endBattleConfirm(const BattleID & battleID)
 void BattleProcessor::battleFinalize(const BattleID & battleID, const BattleResult &result)
 {
 	resultProcessor->battleFinalize(battleID, result);
+	// homam-web fork: release any server-side battle-AI state for this battle.
+	flowProcessor->onBattleEnded(battleID);
 }

@@ -17,6 +17,7 @@ class CStack;
 class BattleHex;
 class BattleHexArray;
 class BattleAction;
+class BattleID;
 class CBattleInfoCallback;
 struct CObstacleInstance;
 namespace battle
@@ -27,12 +28,16 @@ VCMI_LIB_NAMESPACE_END
 
 class CGameHandler;
 class BattleProcessor;
+class ServerBattleAI;
 
 /// Controls flow of battles - battle startup actions and switching to next stack or next round after actions
 class BattleFlowProcessor : boost::noncopyable
 {
 	BattleProcessor * owner;
 	CGameHandler * gameHandler;
+
+	// homam-web fork: plays server-controlled (neutral/no-client) stacks.
+	std::unique_ptr<ServerBattleAI> serverAI;
 
 	const CStack * getNextStack(const CBattleInfoCallback & battle);
 
@@ -69,8 +74,10 @@ class BattleFlowProcessor : boost::noncopyable
 
 public:
 	explicit BattleFlowProcessor(BattleProcessor * owner, CGameHandler * newGameHandler);
+	~BattleFlowProcessor();
 
 	void onBattleStarted(const CBattleInfoCallback & battle);
+	void onBattleEnded(const BattleID & battleID);
 	void onTacticsEnded(const CBattleInfoCallback & battle);
 	void onActionMade(const CBattleInfoCallback & battle, const BattleAction & ba);
 };
