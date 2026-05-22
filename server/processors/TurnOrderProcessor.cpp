@@ -347,17 +347,6 @@ void TurnOrderProcessor::doEndPlayerTurn(PlayerColor which)
 	pet.player = which;
 	gameHandler->sendAndApply(pet);
 
-	// homam-web fork: if this is the currently server-AI-driven player ending
-	// (this runs on the AI's worker thread), do NOT advance the turn order
-	// here. Signal driveTurn (blocked on the IO thread) instead; the IO thread
-	// advances the turn order. This keeps the turn order single-threaded and
-	// avoids nesting blocked TBB workers (which would starve the AI thread pool).
-	if(gameHandler->adventureAI->isDrivingTurnOf(which))
-	{
-		gameHandler->adventureAI->notifyDrivenTurnEnded(which);
-		return;
-	}
-
 	resumeTurnOrder();
 
 	assert(!actingPlayers.empty());

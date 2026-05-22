@@ -70,27 +70,9 @@ public:
 	/// The hosted AI for a player (for routing query callbacks), or nullptr.
 	std::shared_ptr<CGlobalAI> aiFor(PlayerColor player) const;
 
-	/// True while driveTurn is blocking on this player's turn (so the AI's
-	/// async worker thread is the sole game-state mutator). Used by
-	/// TurnOrderProcessor to suppress the worker-thread turn-advance.
-	bool isDrivingTurnOf(PlayerColor player) const;
-
-	/// Called when the currently-driven player's turn has ended (their EndTurn
-	/// applied) — wakes the blocked driveTurn so the IO thread advances the
-	/// turn order.
-	void notifyDrivenTurnEnded(PlayerColor player);
-
 private:
 	CGameHandler * gameHandler;
 	std::unique_ptr<ServerAiClient> client;
 	std::map<PlayerColor, std::shared_ptr<CGlobalAI>> ais;
 	std::map<PlayerColor, std::shared_ptr<CCallback>> callbacks;
-
-	// Turn-drive synchronization. driveTurn (IO thread) blocks until the AI's
-	// worker thread ends the driven player's turn. Only ONE AI turn is driven
-	// at a time, so the worker is the sole mutator while the IO thread parks.
-	std::mutex turnMutex;
-	std::condition_variable turnCv;
-	std::atomic<int> drivenPlayerNum{-2}; // PlayerColor::NEUTRAL-ish sentinel
-	bool drivenTurnEnded = false;
 };

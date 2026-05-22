@@ -24,13 +24,13 @@
 
 #include <vcmi/Environment.h>
 
-// Which adventure AI to host. EmptyAI = wiring spike (just ends the turn +
-// auto-answers queries). Swap to "Nullkiller2" once the worker-thread/lock
-// coordination (Phase 3b-5) is in place.
 // EmptyAI = stable (just ends the turn). Nullkiller2 PLAYS (moves heroes,
-// verified) but currently spins in its endTurn-confirmation do-while because
-// the EndTurn confirmation (requestRealized -> status.madeTurn) isn't landing —
-// see docs/server-side-ai.md Phase 3b. Flip to "Nullkiller2" to resume that work.
+// verified) but its turn never completes: its hero pops a CBlockingDialogQuery
+// (e.g. visiting an object), and we don't yet route that query to the hosted
+// AI's showBlockingDialog callback (Phase 3b step 4), so NK2 never answers it,
+// the query blocks the EndTurn (applies with result=false), and NK2's
+// endTurn-confirmation do-while spins. Implement query routing, then flip this
+// to "Nullkiller2". See docs/server-side-ai.md Phase 3b.
 static const std::string SERVER_ADVENTURE_AI = "EmptyAI";
 
 std::optional<BattleAction> ServerAiClient::makeSurrenderRetreatDecision(PlayerColor, const BattleID &, const BattleStateInfoForRetreat &)
@@ -118,38 +118,15 @@ bool ServerAdventureAI::driveTurn(PlayerColor player, QueryID turnQuery)
 	if(it == ais.end())
 		return false;
 
-	{
-		std::lock_guard<std::mutex> lk(turnMutex);
-		drivenPlayerNum = player.getNum();
-		drivenTurnEnded = false;
-	}
-
-	// EmptyAI::yourTurn is synchronous (ends the turn inline on THIS thread, so
-	// notifyDrivenTurnEnded fires before we wait). Nullkiller2::yourTurn spawns
-	// makeTurn on a TBB worker and returns immediately — we then block here
-	// while the worker plays, so the worker is the sole game-state mutator and
-	// the turn order is advanced only by this (the IO) thread on wake.
+	// NON-BLOCKING: just kick off the AI's turn. EmptyAI ends it inline;
+	// Nullkiller2 spawns makeTurn on a TBB worker and returns immediately. We do
+	// NOT block the IO thread here — the worker's commands flow through
+	// handleReceivedPack -> gameServer().sendPack, which needs the single
+	// io_context thread free (parking it deadlocks the worker's network sends).
+	// The worker advances the turn order itself when it ends its turn (its
+	// EndTurn -> doEndPlayerTurn -> resumeTurnOrder -> next player's yourTurn,
+	// also non-blocking), and deliverRealized() feeds back the PackageApplied so
+	// NK2's endTurn-confirmation loop exits.
 	it->second->yourTurn(turnQuery);
-
-	{
-		std::unique_lock<std::mutex> lk(turnMutex);
-		turnCv.wait(lk, [this]{ return drivenTurnEnded; });
-		drivenPlayerNum = -2;
-	}
 	return true;
-}
-
-bool ServerAdventureAI::isDrivingTurnOf(PlayerColor player) const
-{
-	return drivenPlayerNum.load() == player.getNum();
-}
-
-void ServerAdventureAI::notifyDrivenTurnEnded(PlayerColor player)
-{
-	std::lock_guard<std::mutex> lk(turnMutex);
-	if(drivenPlayerNum.load() == player.getNum())
-	{
-		drivenTurnEnded = true;
-		turnCv.notify_all();
-	}
 }
