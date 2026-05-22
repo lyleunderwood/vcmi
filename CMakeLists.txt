@@ -684,7 +684,14 @@ if(IOS)
 	add_subdirectory(ios)
 endif()
 
-if (ENABLE_CLIENT)
+# homam-web fork: build the AI subdirectory for SERVER builds too, not just
+# client builds. The server needs BattleAI/StupidAI to auto-play neutral and
+# AI-controlled battle stacks — without them, any battle involving a neutral
+# monster stalls forever (the neutral stack becomes active and nothing plays
+# it). Upstream only built AI under ENABLE_CLIENT, leaving headless servers
+# unable to resolve combat. Each AI is still individually gated by its own
+# ENABLE_* flag inside AI/CMakeLists.txt.
+if (ENABLE_CLIENT OR ENABLE_SERVER)
 	add_subdirectory_with_folder("AI" AI)
 endif()
 
