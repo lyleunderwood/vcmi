@@ -153,17 +153,25 @@ void BattleFlowProcessor::onBattleStarted(const CBattleInfoCallback & battle)
 
 	// homam-web fork: if the tactics side is server-driven (no client will run
 	// its tactics), end the tactics phase here so the battle doesn't stall.
-	// Neutral monsters never get tactics, so this only fires under a drive-all
-	// (auto-resolve) policy. We call onTacticsEnded directly rather than
-	// applying an END_TACTIC_PHASE via makeAutomaticBattleAction — the latter
-	// runs the action but NOT onActionMade (which is what normally triggers
-	// onTacticsEnded), so it would silently leave the battle stuck in tactics.
-	// StupidAI doesn't reposition during tactics anyway, so ending immediately
-	// is equivalent to what its yourTacticPhase would do.
+	// This fires when a tactics-skill army auto-resolves.
+	//
+	// Ending tactics needs TWO steps, and missing either wedges the battle:
+	//  (1) Apply an END_TACTIC_PHASE action via makeAutomaticBattleAction. This
+	//      broadcasts a StartAction whose gamestate visitor sets
+	//      tacticDistance = 0 (GameStatePackVisitor.cpp:1312). Without this the
+	//      battle stays "in tactics" and activateNextStack's drives of the
+	//      NON-tactics side are rejected with "not a stack of side that has
+	//      tactics!" forever.
+	//  (2) Call onTacticsEnded to start round 1 and activate the first stack —
+	//      makeAutomaticBattleAction does NOT call onActionMade (the normal
+	//      trigger for onTacticsEnded), so we must do it explicitly.
 	const BattleSide tacticsSide = battle.battleGetTacticsSide();
 	const PlayerColor tacticsPlayer = battle.sideToPlayer(tacticsSide);
 	if (serverAI->shouldDrivePlayer(tacticsPlayer))
+	{
+		owner->makeAutomaticBattleAction(battle, BattleAction::makeEndOFTacticPhase(tacticsSide));
 		onTacticsEnded(battle);
+	}
 	// else: a client-controlled side has tactics — wait for it (the wrapper
 	// ends tactics via the END_TACTIC_PHASE network action, which DOES trigger
 	// onActionMade -> onTacticsEnded).
