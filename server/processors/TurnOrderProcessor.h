@@ -62,6 +62,10 @@ class TurnOrderProcessor : boost::noncopyable
 	/// Returns true if player is ready to start turn
 	bool canStartTurn(PlayerColor which) const;
 
+	/// homam-web fork: true if at least one human player is still INGAME.
+	/// Gates server-side auto-pass of AI turns so an all-AI endgame can't spin days.
+	bool hasHumanInGame() const;
+
 	/// Starts turn for all players that can start turn
 	void tryStartTurnsForPlayers();
 

@@ -277,6 +277,15 @@ void TurnOrderProcessor::doStartPlayerTurn(PlayerColor which)
 	assert(gameHandler->gameInfo().getPlayerState(which));
 	assert(gameHandler->gameInfo().getPlayerState(which)->status == EPlayerStatus::INGAME);
 
+	// homam-web fork: guard against re-starting a player that already acted this
+	// day. The auto-pass below (for AI players) recurses through
+	// doEndPlayerTurn -> resumeTurnOrder -> tryStartTurnsForPlayers, whose
+	// awaiting-set snapshot can re-issue doStartPlayerTurn for a player the
+	// recursion already passed. Without this, that player would get a second
+	// PlayerStartsTurn the same day.
+	if (actedPlayers.count(which))
+		return;
+
 	// Only if player is actually starting his turn (and not loading from save)
 	if (!actingPlayers.count(which))
 		gameHandler->onPlayerTurnStarted(which);
@@ -299,6 +308,26 @@ void TurnOrderProcessor::doStartPlayerTurn(PlayerColor which)
 
 	gameHandler->sendAndApply(pst);
 	assert(!actingPlayers.empty());
+
+	// homam-web fork: headless has no adventure AI (VCMI delegates it to
+	// clients). An AI player's turn would otherwise sit active forever and hang
+	// the day cycle — the wrapper used to end these manually, which broke when
+	// the controlling agent fell behind. Auto-pass them server-side: a
+	// non-human player immediately ends its (empty) turn. Guarded by
+	// hasHumanInGame() so an all-AI endgame can't spin days infinitely.
+	if (!isHuman && hasHumanInGame())
+		onPlayerEndsTurn(which);
+}
+
+bool TurnOrderProcessor::hasHumanInGame() const
+{
+	for (const auto & p : gameHandler->gameInfo().getStartInfo()->playerInfos)
+	{
+		const auto * state = gameHandler->gameInfo().getPlayerState(p.first, false);
+		if (state && state->isHuman() && state->status == EPlayerStatus::INGAME)
+			return true;
+	}
+	return false;
 }
 
 void TurnOrderProcessor::doEndPlayerTurn(PlayerColor which)
