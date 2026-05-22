@@ -495,6 +495,11 @@ void CGameHandler::handleReceivedPack(GameConnectionID connection, CPackForServe
 			successfullyApplied
 		);
 		gameServer().sendPack(applied, connection);
+		// homam-web fork: a server-hosted AI (ServerAdventureAI) issues commands
+		// through this same path; it needs the PackageApplied confirmation
+		// (requestRealized) — e.g. NK2's endTurn loops until it sees the EndTurn
+		// confirmed. Deliver it to the hosted AI for this player, if any.
+		adventureAI->deliverRealized(applied);
 	};
 
 	PackageReceived received(

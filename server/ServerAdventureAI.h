@@ -18,9 +18,13 @@
 #include "../lib/callback/IClient.h"
 #include "../lib/constants/EntityIdentifiers.h"
 
+#include <condition_variable>
+#include <mutex>
+
 VCMI_LIB_NAMESPACE_BEGIN
 class CGlobalAI;
 class CCallback;
+struct PackageApplied;
 VCMI_LIB_NAMESPACE_END
 
 class CGameHandler;
@@ -52,6 +56,11 @@ public:
 	/// True if a hosted AI drives this player.
 	bool isDriven(PlayerColor player) const;
 
+	/// Deliver a PackageApplied confirmation to the hosted AI (if any) so it
+	/// learns its command was applied — NK2 needs the EndTurn confirmation
+	/// (requestRealized -> status.madeTurn) to stop re-requesting end-of-turn.
+	void deliverRealized(const PackageApplied & pa);
+
 	/// Drive the player's adventure turn (calls the AI's yourTurn). Returns
 	/// false if no AI is installed for the player (caller should fall back to
 	/// the bare auto-pass). NOTE: with EmptyAI this is synchronous; Nullkiller2
@@ -61,9 +70,27 @@ public:
 	/// The hosted AI for a player (for routing query callbacks), or nullptr.
 	std::shared_ptr<CGlobalAI> aiFor(PlayerColor player) const;
 
+	/// True while driveTurn is blocking on this player's turn (so the AI's
+	/// async worker thread is the sole game-state mutator). Used by
+	/// TurnOrderProcessor to suppress the worker-thread turn-advance.
+	bool isDrivingTurnOf(PlayerColor player) const;
+
+	/// Called when the currently-driven player's turn has ended (their EndTurn
+	/// applied) — wakes the blocked driveTurn so the IO thread advances the
+	/// turn order.
+	void notifyDrivenTurnEnded(PlayerColor player);
+
 private:
 	CGameHandler * gameHandler;
 	std::unique_ptr<ServerAiClient> client;
 	std::map<PlayerColor, std::shared_ptr<CGlobalAI>> ais;
 	std::map<PlayerColor, std::shared_ptr<CCallback>> callbacks;
+
+	// Turn-drive synchronization. driveTurn (IO thread) blocks until the AI's
+	// worker thread ends the driven player's turn. Only ONE AI turn is driven
+	// at a time, so the worker is the sole mutator while the IO thread parks.
+	std::mutex turnMutex;
+	std::condition_variable turnCv;
+	std::atomic<int> drivenPlayerNum{-2}; // PlayerColor::NEUTRAL-ish sentinel
+	bool drivenTurnEnded = false;
 };
