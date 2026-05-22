@@ -399,13 +399,26 @@ bool BattleFlowProcessor::driveServerControlledStack(const CBattleInfoCallback &
 	if (!serverAI->shouldDrive(battle, stack))
 		return false;
 
-	// Make the stack active first so observers (and the AI's view of the
-	// battle) agree on whose turn it is, then apply the AI's chosen action
-	// through the same path war machines use.
-	setActiveStack(battle, stack, BattleUnitTurnReason::TURN_QUEUE);
-
+	// makeAutomaticAction itself activates the stack (BattleSetActiveStack with
+	// reason AUTOMATIC_ACTION), so no separate setActiveStack call is needed.
 	auto action = serverAI->computeAction(battle, stack);
-	makeAutomaticAction(battle, stack, action.value_or(BattleAction::makeDefend(stack)));
+	const BattleAction chosen = action.value_or(BattleAction::makeDefend(stack));
+	makeAutomaticAction(battle, stack, chosen);
+
+	// Circuit breaker against an infinite activation loop. When a stack can't
+	// reach any enemy (e.g. walled off by obstacles), StupidAI issues a
+	// zero-distance move that the engine applies as a no-op — the stack's turn
+	// is never consumed, willMove() stays true, and activateNextStack re-picks
+	// it (or alternates with another stuck stack) forever (observed: 767K
+	// actions, no progress, no BattleResult). If the action failed to end the
+	// turn, force NO_ACTION, which always consumes it. WAIT legitimately leaves
+	// willMove() true (the stack acts later in the round), so exclude it.
+	if (stack->alive() && stack->willMove() && chosen.actionType != EActionType::WAIT)
+	{
+		logGlobal->warn("[ServerBattleAI] stack %d action (type %d) did not end its turn; forcing NO_ACTION",
+			stack->unitId(), static_cast<int>(chosen.actionType));
+		makeStackDoNothing(battle, stack);
+	}
 	return true;
 }
 
