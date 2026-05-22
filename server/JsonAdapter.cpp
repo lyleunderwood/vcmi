@@ -23,6 +23,7 @@
 #include "../lib/mapping/CMap.h"
 #include "../lib/mapping/TerrainTile.h"
 #include "../lib/mapObjects/CGHeroInstance.h"
+#include "../lib/spells/CSpellHandler.h"
 #include "../lib/pathfinder/CGPathNode.h"
 #include "../lib/pathfinder/PathfinderOptions.h"
 #include "queries/QueriesProcessor.h"
@@ -245,6 +246,46 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			entry["position"]["y"].Integer() = h->pos.y;
 			entry["position"]["z"].Integer() = h->pos.z;
 			entry["movePoints"].Integer() = h->movementPointsRemaining();
+			arr.Vector().push_back(entry);
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperQueryHeroSpells")
+	{
+		// Returns a hero's spellbook + mana with engine-authoritative metadata
+		// (name, level, this hero's actual cost, castability). The wrapper needs
+		// this to drive `battle-cast` — spell IDs alone are useless without
+		// names/costs/mana, and cost depends on the hero's skills.
+		const int heroId = static_cast<int>(req["heroId"].Integer());
+		const auto * h = server.gh->gs->getHero(ObjectInstanceID(heroId));
+		JsonNode resp;
+		resp["type"].String() = "WrapperHeroSpells";
+		resp["heroId"].Integer() = heroId;
+		if (!h)
+		{
+			resp["error"].String() = "no such hero";
+			sendRawJson(sock, resp);
+			return;
+		}
+		resp["mana"].Integer() = h->mana;
+		resp["manaLimit"].Integer() = h->manaLimit();
+		resp["hasSpellbook"].Bool() = h->hasSpellbook();
+		JsonNode & arr = resp["spells"];
+		arr.Vector();
+		for (const SpellID & sid : h->getSpellsInSpellbook())
+		{
+			const CSpell * sp = sid.toSpell();
+			if (!sp) continue;
+			JsonNode entry;
+			entry["id"].Integer() = sid.getNum();
+			entry["name"].String() = sp->getNameTranslated();
+			entry["level"].Integer() = sp->getLevel();
+			entry["cost"].Integer() = h->getSpellCost(sp);
+			entry["combat"].Bool() = sp->isCombat();
+			entry["adventure"].Bool() = sp->isAdventure();
+			entry["canCast"].Bool() = h->canCastThisSpell(sp) && h->mana >= h->getSpellCost(sp);
 			arr.Vector().push_back(entry);
 		}
 		sendRawJson(sock, resp);
