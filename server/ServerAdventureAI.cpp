@@ -25,12 +25,15 @@
 #include <vcmi/Environment.h>
 
 // EmptyAI = stable (just ends the turn). Nullkiller2 PLAYS (moves heroes,
-// verified) but its turn never completes: its hero pops a CBlockingDialogQuery
-// (e.g. visiting an object), and we don't yet route that query to the hosted
-// AI's showBlockingDialog callback (Phase 3b step 4), so NK2 never answers it,
-// the query blocks the EndTurn (applies with result=false), and NK2's
-// endTurn-confirmation do-while spins. Implement query routing, then flip this
-// to "Nullkiller2". See docs/server-side-ai.md Phase 3b.
+// answers level-ups + blocking dialogs via the query routing in
+// CGameHandler::showBlockingDialog/heroLevelUp, visits & picks up objects) but
+// its turn still doesn't COMPLETE: after a HeroVisit/RemoveObject/PlayerBlocked
+// it hangs — NK2's status.waitTillFree() blocks on ongoingHeroMovement /
+// objectsBeingVisited, which only clear via IGameEventsReceiver callbacks
+// (heroMoved/heroVisit/...) we don't yet forward to the hosted AI (event
+// forwarding, the remaining Phase 3b work), and its hero's battles need
+// interaction coordination with ServerBattleAI. Flip to "Nullkiller2" to
+// resume. See docs/server-side-ai.md Phase 3b.
 static const std::string SERVER_ADVENTURE_AI = "EmptyAI";
 
 std::optional<BattleAction> ServerAiClient::makeSurrenderRetreatDecision(PlayerColor, const BattleID &, const BattleStateInfoForRetreat &)

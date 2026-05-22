@@ -20,6 +20,7 @@
 #include "processors/PlayerMessageProcessor.h"
 #include "processors/TurnOrderProcessor.h"
 #include "ServerAdventureAI.h"
+#include "../lib/callback/CGlobalAI.h" // homam-web: hosted-AI query routing
 #include "queries/QueriesProcessor.h"
 #include "queries/MapQueries.h"
 #include "queries/VisitQueries.h"
@@ -172,6 +173,9 @@ void CGameHandler::levelUpHero(const CGHeroInstance * hero)
 		auto levelUpQuery = std::make_shared<CHeroLevelUpDialogQuery>(this, hlu, hero);
 		queries->addQuery(levelUpQuery);
 		//level up will be called on query reply
+		// homam-web fork: route to a server-hosted AI so it picks a skill.
+		if(auto ai = adventureAI->aiFor(hero->getOwner()))
+			ai->heroGotLevel(hero, hlu.primskill, hlu.skills, levelUpQuery->queryID);
 	}
 }
 
@@ -1162,6 +1166,10 @@ void CGameHandler::showBlockingDialog(const IObjectInterface * caller, BlockingD
 	queries->addQuery(dialogQuery);
 	iw->queryID = dialogQuery->queryID;
 	sendAndApply(*iw);
+	// homam-web fork: route to a server-hosted AI so it answers (else its turn
+	// blocks on the unanswered query). It replies via QueryReply, clearing it.
+	if(auto ai = adventureAI->aiFor(iw->player))
+		ai->showBlockingDialog(iw->text.toString(), iw->components, dialogQuery->queryID, iw->soundID, iw->selection(), iw->cancel(), iw->flags & BlockingDialog::SAFE_TO_AUTOACCEPT);
 }
 
 void CGameHandler::showTeleportDialog(TeleportDialog *iw)
