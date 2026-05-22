@@ -23,6 +23,9 @@
 #include "../lib/mapping/CMap.h"
 #include "../lib/mapping/TerrainTile.h"
 #include "../lib/mapObjects/CGHeroInstance.h"
+#include "../lib/mapObjects/CGTownInstance.h"
+#include "../lib/entities/faction/CTown.h"
+#include "../lib/CCreatureHandler.h"
 #include "../lib/spells/CSpellHandler.h"
 #include "../lib/pathfinder/CGPathNode.h"
 #include "../lib/pathfinder/PathfinderOptions.h"
@@ -287,6 +290,65 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			entry["adventure"].Bool() = sp->isAdventure();
 			entry["canCast"].Bool() = h->canCastThisSpell(sp) && h->mana >= h->getSpellCost(sp);
 			arr.Vector().push_back(entry);
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperQueryTown")
+	{
+		// Returns a town's built buildings + dwellings with the creatures
+		// recruitable RIGHT NOW (id, name, available count, gold cost). The
+		// wrapper learns town changes from NewStructures/SetAvailableCreatures
+		// packs, but those only fire on CHANGE — the INITIAL town state isn't
+		// broadcast, so a fresh client has no idea what its town can recruit.
+		// This reads it straight from the engine. Drives the `recruit` verb.
+		const int townId = static_cast<int>(req["townId"].Integer());
+		JsonNode resp;
+		resp["type"].String() = "WrapperTown";
+		resp["townId"].Integer() = townId;
+		const auto * obj = map.getObject(ObjectInstanceID(townId));
+		const auto * town = dynamic_cast<const CGTownInstance *>(obj);
+		if (!town)
+		{
+			resp["error"].String() = "no such town";
+			sendRawJson(sock, resp);
+			return;
+		}
+		resp["name"].String() = town->getNameTranslated();
+		if (town->getOwner().isValidPlayer())
+			resp["owner"].Integer() = town->getOwner().getNum();
+		JsonNode & blds = resp["buildings"];
+		blds.Vector();
+		for (const BuildingID & b : town->getBuildings())
+		{
+			JsonNode e; e.Integer() = b.getNum();
+			blds.Vector().push_back(e);
+		}
+		// Dwellings: town->creatures[level] = { availableCount, [creatureIds] }.
+		JsonNode & dwellings = resp["dwellings"];
+		dwellings.Vector();
+		for (size_t level = 0; level < town->creatures.size(); level++)
+		{
+			const auto & slot = town->creatures[level];
+			const ui32 available = slot.first;
+			if (slot.second.empty()) continue;
+			JsonNode d;
+			d["level"].Integer() = static_cast<int64_t>(level);
+			d["available"].Integer() = available;
+			JsonNode & cres = d["creatures"];
+			cres.Vector();
+			for (const CreatureID & cid : slot.second)
+			{
+				const CCreature * cre = cid.toCreature();
+				if (!cre) continue;
+				JsonNode c;
+				c["id"].Integer() = cid.getNum();
+				c["name"].String() = cre->getNamePluralTranslated();
+				c["goldCost"].Integer() = cre->getRecruitCost(GameResID::GOLD);
+				cres.Vector().push_back(c);
+			}
+			dwellings.Vector().push_back(d);
 		}
 		sendRawJson(sock, resp);
 		return;
