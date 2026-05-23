@@ -880,6 +880,37 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				resp["reason"].String() = server.gh->gs->isVisibleFor(dest, hero->getOwner())
 					? "blocked or out of reach (tile is explored but no path exists)"
 					: "fog of war — tile not explored yet (move closer to reveal it)";
+
+				// homam-web fork: best-effort navigation. The exact target is
+				// unreachable (FoW / blocked), but a caller "marching toward" a
+				// distant goal wants to move as far in that direction as possible
+				// this turn. Scan all reachable nodes (the pathfinder already
+				// computed them) for the one nearest the target and return it as
+				// `bestReachable` (in visitablePos space, a valid goto target).
+				const CGPathNode * bestNode = nullptr;
+				int3 bestTile(-1, -1, -1);
+				int bestDist = std::numeric_limits<int>::max();
+				for (int z2 = 0; z2 < map.levels(); z2++)
+					for (int x2 = 0; x2 < map.width; x2++)
+						for (int y2 = 0; y2 < map.height; y2++)
+						{
+							const int3 t2(x2, y2, z2);
+							const CGPathNode * n = pathsInfo.getNode(t2);
+							if (!n || !n->theNodeBefore)
+								continue; // unreachable, or the start node itself
+							const int dd = std::abs(x2 - dx) + std::abs(y2 - dy) + std::abs(z2 - dz) * 1000;
+							if (dd < bestDist) { bestDist = dd; bestNode = n; bestTile = t2; }
+						}
+				if (bestNode)
+				{
+					JsonNode & br = resp["bestReachable"];
+					br["x"].Integer() = bestTile.x;
+					br["y"].Integer() = bestTile.y;
+					br["z"].Integer() = bestTile.z;
+					br["cost"].Float() = bestNode->cost;
+					br["turnsToReach"].Integer() = bestNode->turns;
+					br["distanceToTarget"].Integer() = bestDist;
+				}
 			}
 			if (reachable && !path.nodes.empty())
 			{
