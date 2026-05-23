@@ -794,6 +794,17 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				heroId, hero->pos.x, hero->pos.y, hero->pos.z, dx, dy, dz,
 				reachable ? 1 : 0, (int)path.nodes.size());
 			resp["reachable"].Bool() = reachable;
+			if (!reachable)
+			{
+				// homam-web fork: the pathfinder is FoW-limited — it will NOT route
+				// to a tile the hero's owner hasn't explored yet, even if the
+				// wrapper's omniscient map (WrapperQueryRegion reads engine truth)
+				// shows it as open. Distinguish that from a genuinely blocked/
+				// out-of-range tile so the caller isn't misled by "not reachable".
+				resp["reason"].String() = server.gh->gs->isVisibleFor(dest, hero->getOwner())
+					? "blocked or out of reach (tile is explored but no path exists)"
+					: "fog of war — tile not explored yet (move closer to reveal it)";
+			}
 			if (reachable && !path.nodes.empty())
 			{
 				// path.nodes is in reverse (dest -> start); front() is destination.
