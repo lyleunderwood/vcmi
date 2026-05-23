@@ -61,6 +61,14 @@ bool CBattleQuery::blocksPack(const CPackForServer * pack) const
 	if(dynamic_cast<const SaveGame*>(pack) != nullptr)
 		return false;
 
+	// homam-web fork: AdvInterfaceReady is a UI-readiness signal (sets
+	// uiReadyForDialogs, kicks the top query) — harmless mid-battle. Allowing it
+	// matters when a loaded battle auto-resumes during the load handshake: a
+	// non-participant player's ready pack arrives after the battle query exists
+	// and would otherwise be rejected. See JsonAdapter::resumeOrphanedBattles.
+	if(dynamic_cast<const AdvInterfaceReady*>(pack) != nullptr)
+		return false;
+
 	return true;
 }
 

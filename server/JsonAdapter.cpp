@@ -34,6 +34,7 @@
 #include "../lib/pathfinder/PathfinderOptions.h"
 #include "queries/QueriesProcessor.h"
 #include "queries/CQuery.h"
+#include "queries/BattleQueries.h"
 #include "processors/TurnOrderProcessor.h"
 #include "../lib/serializer/GameConnection.h"
 
@@ -136,6 +137,13 @@ void JsonAdapter::onPacketReceived(const std::shared_ptr<INetworkConnection> & c
 				server.gh->handleReceivedPack(game->connectionID, *serverPack);
 			else
 				throw std::runtime_error("Pack '" + packType + "' is a CPackForServer but no CGameHandler is running yet (still in lobby?)");
+
+			// homam-web fork (#90): a player signalling their adventure interface
+			// is ready (on connect/load) auto-resumes any live battle that was
+			// orphaned by a reload — so a defender who disconnected mid-battle
+			// keeps playing without a manual resume-battle. No-op if none.
+			if (dynamic_cast<AdvInterfaceReady *>(rawPack.get()))
+				resumeOrphanedBattles(connection, serverPack->player.getNum());
 		}
 		else
 		{
@@ -208,6 +216,57 @@ void JsonAdapter::sendRawJson(const std::shared_ptr<INetworkConnection> & sock, 
 	std::memcpy(payload.data(), body.data(), body.size());
 	logNetwork->info("[JsonAdapter] outbound (raw): %s", body);
 	sock->sendPacket(payload);
+}
+
+std::vector<int> JsonAdapter::resumeOrphanedBattles(const std::shared_ptr<INetworkConnection> & sock, int onlyPlayerNum)
+{
+	std::vector<int> resumed;
+	if (!server.gh || !server.gh->gs)
+		return resumed;
+
+	// battleIDs that still have a live CBattleQuery are in-progress on a running
+	// server (not a reload) — leave them alone. A reloaded battle has none.
+	std::set<int> hasQuery;
+	for (const auto & q : server.gh->queries->allQueries())
+		if (auto bq = std::dynamic_pointer_cast<CBattleQuery>(q))
+			hasQuery.insert(bq->battleID.getNum());
+
+	// Snapshot the ids first — resumeLoadedBattle mutates engine state.
+	std::vector<BattleID> ids;
+	for (const auto & bi : server.gh->gs->currentBattles)
+		if (bi) ids.push_back(bi->battleID);
+
+	for (const BattleID & id : ids)
+	{
+		const BattleInfo * bi = server.gh->gs->getBattle(id);
+		if (!bi) continue;
+		if (hasQuery.count(id.getNum())) continue; // live battle, not orphaned
+
+		if (onlyPlayerNum >= 0)
+		{
+			const PlayerColor want(onlyPlayerNum);
+			if (bi->getSide(BattleSide::ATTACKER).color != want
+				&& bi->getSide(BattleSide::DEFENDER).color != want)
+				continue; // this player isn't a participant
+		}
+
+		// (1) push the battle model so the wrapper rebuilds it via its BattleStart
+		// codec, BEFORE re-activating (so it has the model when BattleSetActiveStack
+		// arrives). We synthesize the JSON rather than send a real BattleStart pack
+		// (whose apply would duplicate the battle in gs).
+		JsonNode bs;
+		bs["type"].String() = "BattleStart";
+		bs["battleID"].Integer() = bi->battleID.getNum();
+		JsonNode info;
+		emitBattleInfo(*bi, info);
+		bs["info"] = info;
+		sendRawJson(sock, bs);
+
+		// (2) recreate query + re-activate flow (may emit BattleSetActiveStack).
+		server.gh->battles->resumeLoadedBattle(id);
+		resumed.push_back(id.getNum());
+	}
+	return resumed;
 }
 
 void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> & sock, const std::string & queryType, const JsonNode & req)
@@ -406,34 +465,11 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		resp["type"].String() = "WrapperResumeBattleResult";
 		JsonNode & arr = resp["resumed"];
 		arr.Vector();
-		if (server.gh && server.gh->gs)
+		for (int id : resumeOrphanedBattles(sock, -1))
 		{
-			// Snapshot the IDs first — resumeLoadedBattle mutates engine state.
-			std::vector<BattleID> ids;
-			for (const auto & bi : server.gh->gs->currentBattles)
-				if (bi) ids.push_back(bi->battleID);
-
-			for (const BattleID & id : ids)
-			{
-				const BattleInfo * bi = server.gh->gs->getBattle(id);
-				if (!bi) continue;
-
-				// (1) push the battle model to the wrapper as a BattleStart.
-				JsonNode bs;
-				bs["type"].String() = "BattleStart";
-				bs["battleID"].Integer() = bi->battleID.getNum();
-				JsonNode info;
-				emitBattleInfo(*bi, info);
-				bs["info"] = info;
-				sendRawJson(sock, bs);
-
-				// (2) recreate query + re-activate flow (may emit BattleSetActiveStack).
-				server.gh->battles->resumeLoadedBattle(id);
-
-				JsonNode entry;
-				entry.Integer() = id.getNum();
-				arr.Vector().push_back(entry);
-			}
+			JsonNode entry;
+			entry.Integer() = id;
+			arr.Vector().push_back(entry);
 		}
 		sendRawJson(sock, resp);
 		return;

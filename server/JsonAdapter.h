@@ -56,6 +56,15 @@ private:
 	/// engine state (map size, regions, etc.). Not real engine packs; never
 	/// forwarded to gh. We synthesize a response and send it back.
 	void handleWrapperQuery(const std::shared_ptr<INetworkConnection> & sock, const std::string & queryType, const JsonNode & req);
+	/// homam-web fork (#90): re-establish battles restored from a save but left
+	/// ORPHANED (in gs->currentBattles with no CBattleQuery — queries aren't
+	/// serialized). For each such battle (optionally filtered to `onlyPlayer`),
+	/// push a BattleStart-shaped payload so the wrapper rebuilds the model, then
+	/// recreate the query + re-activate the flow. Returns the resumed battle ids.
+	/// Skips battles that still have a live CBattleQuery (a still-running server,
+	/// not a reload) so it never disturbs an in-progress battle. `onlyPlayerNum`
+	/// of -1 resumes all orphaned battles; otherwise only those the player is in.
+	std::vector<int> resumeOrphanedBattles(const std::shared_ptr<INetworkConnection> & sock, int onlyPlayerNum);
 	/// Send raw JSON over a JSON-mode connection (used by wrapper-query responses).
 	void sendRawJson(const std::shared_ptr<INetworkConnection> & sock, const JsonNode & json);
 };
