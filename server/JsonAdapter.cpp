@@ -654,6 +654,9 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		}
 		const PlayerColor owner = hero->getOwner();
 		const auto & nmap = server.gh->gs->getMap();
+		// The hero's own army strength, so a caller can compare against a POI's
+		// guardStrength and judge whether to engage.
+		resp["heroArmyStrength"].Integer() = static_cast<int64_t>(hero->getArmyStrength());
 
 		CPathsInfo navPaths(int3(nmap.width, nmap.height, nmap.levels()), hero);
 		auto navCfg = std::make_shared<SingleHeroPathfinderConfig>(navPaths, server.gh->gameInfo(), hero);
@@ -698,13 +701,36 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			e["id"].Integer() = obj->id.getNum();
 			e["type"].Integer() = oid.getNum();
 			e["name"].String() = obj->getObjectName();
-			if (obj->getOwner().isValidPlayer())
-				e["owner"].Integer() = obj->getOwner().getNum();
+			const PlayerColor objOwner = obj->getOwner();
+			if (objOwner.isValidPlayer())
+				e["owner"].Integer() = objOwner.getNum();
 			e["x"].Integer() = p.x;
 			e["y"].Integer() = p.y;
 			e["z"].Integer() = p.z;
 			e["reachable"].Bool() = r;
 			if (r) e["turns"].Integer() = t;
+			// homam-web fork: surface GUARDS so the agent isn't blind-marched into
+			// a fight. A POI is "contested" if (a) a wandering monster guards its
+			// approach (getGuardingCreatures) or (b) it's an enemy-owned object
+			// (taking it can trigger combat with its defenders). Report guard
+			// strength when known so the agent can judge whether to engage.
+			const auto guards = server.gh->gameInfo().getGuardingCreatures(p);
+			uint64_t guardStrength = 0;
+			for (const auto * g : guards)
+				if (const auto * ai = dynamic_cast<const CArmedInstance *>(g))
+					guardStrength += ai->getArmyStrength();
+			const bool enemyOwned = objOwner.isValidPlayer() && objOwner != owner;
+			if (!guards.empty() || enemyOwned)
+			{
+				e["guarded"].Bool() = true;
+				if (!guards.empty())
+				{
+					e["guardName"].String() = guards.front()->getObjectName();
+					e["guardStrength"].Integer() = static_cast<int64_t>(guardStrength);
+				}
+				if (enemyOwned)
+					e["enemyOwned"].Bool() = true;
+			}
 			pois.Vector().push_back(e);
 		}
 
