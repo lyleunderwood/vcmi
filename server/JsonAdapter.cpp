@@ -32,6 +32,7 @@
 #include "../lib/entities/faction/CTown.h"
 #include "../lib/entities/building/CBuilding.h"
 #include "../lib/CCreatureHandler.h"
+#include "../lib/mapObjects/army/CStackInstance.h"
 #include "../lib/spells/CSpellHandler.h"
 #include "../lib/pathfinder/CGPathNode.h"
 #include "../lib/pathfinder/PathfinderOptions.h"
@@ -724,6 +725,26 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		// (1) POIs — visible objects of interest.
 		JsonNode & pois = resp["pois"];
 		pois.Vector();
+
+		// homam-web fork: FAITHFUL enemy intel (no cheating). A human only learns
+		// an enemy/guard army as an APPROXIMATE quantity BAND per stack — the
+		// right-click quick-info popup ("Pack"=10-19, "Lots"=20-49, … via
+		// CGCreature::getPopupText → CStackInstance::getQuantityID). Exact
+		// getArmyStrength is info the player cannot see, so we emit only the bands
+		// the engine itself surfaces. `out` must already be a Vector().
+		const auto appendArmyBands = [](const CArmedInstance * army, JsonNode & out)
+		{
+			if (!army) return;
+			for (const auto & slot : army->Slots())
+			{
+				const auto & st = slot.second;
+				if (!st || !st->getCreature()) continue;
+				JsonNode e;
+				e["creature"].String() = st->getCreature()->getNamePluralTranslated();
+				e["count"].String() = CCreature::getQuantityRangeStringForId(st->getQuantityID());
+				out.Vector().push_back(e);
+			}
+		};
 		for (const auto * obj : nmap.getObjects())
 		{
 			if (!obj || obj->id == hero->id) continue;
@@ -755,10 +776,6 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			// (taking it can trigger combat with its defenders). Report guard
 			// strength when known so the agent can judge whether to engage.
 			const auto guards = server.gh->gameInfo().getGuardingCreatures(p);
-			uint64_t guardStrength = 0;
-			for (const auto * g : guards)
-				if (const auto * ai = dynamic_cast<const CArmedInstance *>(g))
-					guardStrength += ai->getArmyStrength();
 			const bool enemyOwned = objOwner.isValidPlayer() && objOwner != owner;
 			if (!guards.empty() || enemyOwned)
 			{
@@ -766,11 +783,23 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				if (!guards.empty())
 				{
 					e["guardName"].String() = guards.front()->getObjectName();
-					e["guardStrength"].Integer() = static_cast<int64_t>(guardStrength);
+					// Approximate per-stack bands of the wandering monster(s) guarding
+					// the approach — faithful to the right-click quick-info popup.
+					JsonNode & ga = e["guardArmy"]; ga.Vector();
+					for (const auto * g : guards)
+						appendArmyBands(dynamic_cast<const CArmedInstance *>(g), ga);
 				}
 				if (enemyOwned)
 					e["enemyOwned"].Bool() = true;
 			}
+			// The defender's OWN army (enemy hero/town garrison, or a wandering
+			// monster as a POI) — approximate bands only.
+			if (const auto * armed = dynamic_cast<const CArmedInstance *>(obj))
+				if (enemyOwned || oid == Obj::MONSTER)
+				{
+					JsonNode & da = e["army"]; da.Vector();
+					appendArmyBands(armed, da);
+				}
 			pois.Vector().push_back(e);
 		}
 
