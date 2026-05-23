@@ -21,6 +21,7 @@
 #include "../lib/networkPacks/PacksForServer.h"
 #include "../lib/networkPacks/PacksForClient.h"
 #include "../lib/gameState/CGameState.h"
+#include "../lib/CPlayerState.h"
 #include "../lib/battle/BattleInfo.h"
 #include "../lib/CStack.h"
 #include "../lib/mapping/CMap.h"
@@ -555,6 +556,81 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperQueryKingdom")
+	{
+		// homam-web fork: a player's kingdom overview — towns, heroes, resources,
+		// and total daily income. Closes the "no way to enumerate my towns/heroes
+		// with state at game start" gap (the pack stream only carries changes).
+		// `player` defaults to the first human player.
+		JsonNode resp;
+		resp["type"].String() = "WrapperKingdom";
+		PlayerColor player = PlayerColor::CANNOT_DETERMINE;
+		if (req["player"].isNumber())
+			player = PlayerColor(static_cast<int32_t>(req["player"].Integer()));
+		else
+		{
+			for (const auto & pi : server.gh->gameInfo().getStartInfo()->playerInfos)
+			{
+				const auto * ps = server.gh->gameInfo().getPlayerState(pi.first, false);
+				if (ps && ps->isHuman()) { player = pi.first; break; }
+			}
+		}
+		const auto * ps = server.gh->gameInfo().getPlayerState(player, false);
+		if (!ps)
+		{
+			resp["error"].String() = "no such player";
+			sendRawJson(sock, resp);
+			return;
+		}
+		resp["player"].Integer() = player.getNum();
+
+		ResourceSet income; // accumulate daily income across towns
+		JsonNode & townsArr = resp["towns"];
+		townsArr.Vector();
+		for (const auto * t : ps->getTowns())
+		{
+			JsonNode e;
+			e["id"].Integer() = t->id.getNum();
+			e["name"].String() = t->getNameTranslated();
+			e["faction"].Integer() = t->getFactionID().getNum();
+			e["position"]["x"].Integer() = t->visitablePos().x;
+			e["position"]["y"].Integer() = t->visitablePos().y;
+			e["position"]["z"].Integer() = t->visitablePos().z;
+			townsArr.Vector().push_back(e);
+			income += t->dailyIncome();
+		}
+
+		JsonNode & heroesArr = resp["heroes"];
+		heroesArr.Vector();
+		for (const auto * hh : ps->getHeroes())
+		{
+			JsonNode e;
+			e["id"].Integer() = hh->id.getNum();
+			e["name"].String() = hh->getNameTranslated();
+			e["level"].Integer() = hh->level;
+			e["position"]["x"].Integer() = hh->visitablePos().x;
+			e["position"]["y"].Integer() = hh->visitablePos().y;
+			e["position"]["z"].Integer() = hh->visitablePos().z;
+			heroesArr.Vector().push_back(e);
+		}
+
+		const auto emitResources = [](const ResourceSet & rs, JsonNode & out)
+		{
+			out["wood"].Integer() = rs[GameResID::WOOD];
+			out["mercury"].Integer() = rs[GameResID::MERCURY];
+			out["ore"].Integer() = rs[GameResID::ORE];
+			out["sulfur"].Integer() = rs[GameResID::SULFUR];
+			out["crystal"].Integer() = rs[GameResID::CRYSTAL];
+			out["gems"].Integer() = rs[GameResID::GEMS];
+			out["gold"].Integer() = rs[GameResID::GOLD];
+		};
+		emitResources(ps->resources, resp["resources"]);
+		emitResources(income, resp["dailyIncome"]);
+
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperSetAutoResolve")
 	{
 		// Toggle full server-side auto-resolve: when on, the server's battle AI
@@ -898,6 +974,13 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		const int x1 = static_cast<int>(req["x1"].Integer());
 		const int y1 = static_cast<int>(req["y1"].Integer());
 		const int z = req["z"].isNumber() ? static_cast<int>(req["z"].Integer()) : 0;
+		// homam-web fork: optional FoW filter. When `fogForPlayer` is set, each
+		// tile is tagged with `visible` (gs->isVisibleFor) so the client can
+		// distinguish explored tiles from omniscient terrain it shouldn't act on.
+		const bool haveFog = req["fogForPlayer"].isNumber();
+		const PlayerColor fogPlayer = haveFog
+			? PlayerColor(static_cast<int32_t>(req["fogForPlayer"].Integer()))
+			: PlayerColor::CANNOT_DETERMINE;
 
 		JsonNode resp;
 		resp["type"].String() = "WrapperMapRegion";
@@ -927,6 +1010,8 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				if (tile.hasRoad())  { entry["roadType"].Integer() = tile.getRoadID().getNum();  entry["roadDir"].Integer() = tile.roadDir; }
 				entry["blocked"].Bool() = tile.blocked();
 				entry["visitable"].Bool() = tile.visitable();
+				if (haveFog)
+					entry["visible"].Bool() = server.gh->gs->isVisibleFor(t, fogPlayer);
 				const auto topObj = tile.topVisitableObj();
 				if (topObj.getNum() >= 0)
 				{
