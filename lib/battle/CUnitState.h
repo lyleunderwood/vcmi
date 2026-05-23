@@ -44,6 +44,15 @@ public:
 	virtual void use(int32_t amount = 1);
 
 	virtual void serializeJson(JsonSerializeFormat & handler);
+
+	// homam-web fork: binary serialization of live battle runtime state, so a
+	// battle saved mid-fight (gs->currentBattles) restores stacks that are still
+	// alive. Upstream never saves mid-battle, so only `used` is meaningful here
+	// (the bonus caches are rebuilt on load). See [[project-codec-completion]].
+	template <typename Handler> void serialize(Handler & h)
+	{
+		h & used;
+	}
 protected:
 	int32_t used;
 	const battle::Unit * owner;
@@ -81,6 +90,13 @@ public:
 	void reset() override;
 
 	void serializeJson(JsonSerializeFormat & handler) override;
+
+	// homam-web fork: live-battle state (see CAmmo::serialize).
+	template <typename Handler> void serialize(Handler & h)
+	{
+		h & static_cast<CAmmo&>(*this);
+		h & totalCache;
+	}
 private:
 	mutable int32_t totalCache;
 
@@ -115,6 +131,15 @@ public:
 	void takeResurrected();
 
 	void serializeJson(JsonSerializeFormat & handler);
+
+	// homam-web fork: live-battle state. getCount() is firstHPleft/fullUnits-based
+	// (no bonus dependency), so restoring these makes alive() correct on load.
+	template <typename Handler> void serialize(Handler & h)
+	{
+		h & firstHPleft;
+		h & fullUnits;
+		h & resurrected;
+	}
 private:
 	void addResurrected(int32_t amount);
 	void setFromTotal(const int64_t totalHealth);
@@ -249,6 +274,32 @@ public:
 
 	void localInit(const IUnitEnvironment * env_);
 	void serializeJson(JsonSerializeFormat & handler);
+
+	// homam-web fork: binary serialization of the full live battle runtime state
+	// (CStack::serialize calls this gated on HOMAM_LIVE_BATTLES). Mirrors the
+	// fields in serializeJson; the env/bonus caches are rebuilt by postDeserialize.
+	template <typename Handler> void serialize(Handler & h)
+	{
+		h & cloned;
+		h & defending;
+		h & defendingAnim;
+		h & drainedMana;
+		h & fear;
+		h & hadMorale;
+		h & castSpellThisTurn;
+		h & ghost;
+		h & ghostPending;
+		h & movedThisRound;
+		h & summoned;
+		h & waiting;
+		h & waitedThisTurn;
+		h & casts;
+		h & counterAttacks;
+		h & health;
+		h & shots;
+		h & cloneID;
+		h & position;
+	}
 
 	FactionID getFactionID() const override;
 

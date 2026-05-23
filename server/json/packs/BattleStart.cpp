@@ -158,7 +158,9 @@ static void emitSiegeInfo(const SiegeInfo & s, JsonNode & out)
 	out["gateState"].String() = gateStateName(s.gateState);
 }
 
-static void emitBattleInfo(const BattleInfo & bi, JsonNode & out)
+// homam-web fork: non-static so the JsonAdapter can synthesize a BattleStart
+// payload to resume a loaded battle on the wrapper (WrapperResumeBattle).
+void emitBattleInfo(const BattleInfo & bi, JsonNode & out)
 {
 	out["battleID"].Integer() = bi.battleID.getNum();
 	out["round"].Integer() = bi.round;

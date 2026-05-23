@@ -160,6 +160,46 @@ void BattleProcessor::startBattle(const CArmedInstance *army1, const CArmedInsta
 	flowProcessor->onBattleStarted(*battle);
 }
 
+void BattleProcessor::resumeLoadedBattle(const BattleID & battleID)
+{
+	// homam-web fork: currentBattles is serialized into the save, so the
+	// BattleInfo (stacks, round, turn order, obstacles) survives load — but the
+	// CBattleQuery (the thing that blocks the defender's packs and routes their
+	// actions) and the live flow state are NOT serialized. Recreate them so a
+	// human who disconnected mid-defense can reconnect and keep playing.
+	const auto * battle = gameHandler->gameState().getBattle(battleID);
+	if (!battle)
+	{
+		logGlobal->error("resumeLoadedBattle: no battle %d in gameState", battleID.getNum());
+		return;
+	}
+
+	const PlayerColor attacker = battle->getSide(BattleSide::ATTACKER).color;
+	const PlayerColor defender = battle->getSide(BattleSide::DEFENDER).color;
+
+	// Re-block both players (UPCOMING_BATTLE) — re-broadcasts that they are in a
+	// battle, mirroring a fresh startBattle.
+	engageIntoBattle(attacker);
+	engageIntoBattle(defender);
+
+	auto existing = std::dynamic_pointer_cast<CBattleQuery>(gameHandler->queries->topQuery(attacker));
+	if(!existing)
+		existing = std::dynamic_pointer_cast<CBattleQuery>(gameHandler->queries->topQuery(defender));
+
+	if(existing)
+	{
+		existing->battleID = battleID;
+	}
+	else
+	{
+		auto newBattleQuery = std::make_shared<CBattleQuery>(gameHandler, battle);
+		gameHandler->queries->addQuery(newBattleQuery);
+	}
+
+	// Re-activate the stack loop from the serialized turn-order/round state.
+	flowProcessor->resumeFlow(*battle);
+}
+
 void BattleProcessor::startBattle(const CArmedInstance *army1, const CArmedInstance *army2)
 {
 	startBattle(army1, army2, army2->visitablePos(),

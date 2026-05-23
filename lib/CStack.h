@@ -108,6 +108,12 @@ public:
 		h & slot;
 		h & side;
 		h & initialPosition;
+		// homam-web fork: persist the live CUnitState (health, position, movement
+		// flags, casts/shots) so a battle saved mid-fight (gs->currentBattles)
+		// restores stacks that are still alive and can resume. Upstream never
+		// saves mid-battle, hence the gate. See [[project-codec-completion]].
+		if(h.hasFeature(Handler::Version::HOMAM_LIVE_BATTLES))
+			h & static_cast<battle::CUnitState&>(*this);
 	}
 
 private:

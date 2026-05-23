@@ -11,6 +11,7 @@
 #include "JsonAdapter.h"
 #include "CVCMIServer.h"
 #include "CGameHandler.h"
+#include "battles/BattleProcessor.h"
 #include "json/PackCodec.h"
 #include "json/PackCodecRegistry.h"
 
@@ -20,10 +21,12 @@
 #include "../lib/networkPacks/PacksForServer.h"
 #include "../lib/networkPacks/PacksForClient.h"
 #include "../lib/gameState/CGameState.h"
+#include "../lib/battle/BattleInfo.h"
 #include "../lib/mapping/CMap.h"
 #include "../lib/mapping/TerrainTile.h"
 #include "../lib/mapObjects/CGHeroInstance.h"
 #include "../lib/mapObjects/CGTownInstance.h"
+#include "../lib/mapObjects/ObjectTemplate.h"
 #include "../lib/entities/faction/CTown.h"
 #include "../lib/CCreatureHandler.h"
 #include "../lib/spells/CSpellHandler.h"
@@ -33,6 +36,11 @@
 #include "queries/CQuery.h"
 #include "processors/TurnOrderProcessor.h"
 #include "../lib/serializer/GameConnection.h"
+
+// homam-web fork: defined in server/json/packs/BattleStart.cpp — serializes a
+// BattleInfo into the same JSON shape the BattleStart codec emits, so we can
+// synthesize a resume payload the wrapper's existing BattleStart handler accepts.
+void emitBattleInfo(const BattleInfo & bi, JsonNode & out);
 
 JsonAdapter::JsonAdapter(CVCMIServer & srv) : server(srv) {}
 JsonAdapter::~JsonAdapter() = default;
@@ -385,6 +393,52 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperResumeBattle")
+	{
+		// homam-web fork (#90): a battle restored from a save lives in gs->currentBattles
+		// but has no CBattleQuery and was never re-broadcast — the human who
+		// disconnected mid-defense reconnects ACTIVE_FREE with no battle model.
+		// For each orphaned loaded battle: (1) send a BattleStart-shaped payload so
+		// the wrapper rebuilds the battle model via its existing BattleStart handler,
+		// then (2) recreate the query + re-activate the flow on the server. Order
+		// matters: the wrapper must have the model before BattleSetActiveStack arrives.
+		JsonNode resp;
+		resp["type"].String() = "WrapperResumeBattleResult";
+		JsonNode & arr = resp["resumed"];
+		arr.Vector();
+		if (server.gh && server.gh->gs)
+		{
+			// Snapshot the IDs first — resumeLoadedBattle mutates engine state.
+			std::vector<BattleID> ids;
+			for (const auto & bi : server.gh->gs->currentBattles)
+				if (bi) ids.push_back(bi->battleID);
+
+			for (const BattleID & id : ids)
+			{
+				const BattleInfo * bi = server.gh->gs->getBattle(id);
+				if (!bi) continue;
+
+				// (1) push the battle model to the wrapper as a BattleStart.
+				JsonNode bs;
+				bs["type"].String() = "BattleStart";
+				bs["battleID"].Integer() = bi->battleID.getNum();
+				JsonNode info;
+				emitBattleInfo(*bi, info);
+				bs["info"] = info;
+				sendRawJson(sock, bs);
+
+				// (2) recreate query + re-activate flow (may emit BattleSetActiveStack).
+				server.gh->battles->resumeLoadedBattle(id);
+
+				JsonNode entry;
+				entry.Integer() = id.getNum();
+				arr.Vector().push_back(entry);
+			}
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperPopQuery")
 	{
 		// Hard escape: forcibly remove a query from the QueriesProcessor.
@@ -563,6 +617,32 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperQueryObjects")
+	{
+		// Full object list (decorations + gameplay), each once, at its anchor (bottom-right) tile.
+		JsonNode resp;
+		resp["type"].String() = "WrapperObjects";
+		JsonNode & arr = resp["objects"];
+		arr.Vector();
+		for (const auto & obj : map.objects)
+		{
+			if (!obj) continue;
+			const int3 p = obj->anchorPos();
+			JsonNode e;
+			e["id"].Integer() = obj->id.getNum();
+			e["x"].Integer() = p.x;
+			e["y"].Integer() = p.y;
+			e["z"].Integer() = p.z;
+			e["objType"].Integer() = obj->ID.getNum();
+			e["objSubType"].Integer() = obj->subID.getNum();
+			if (obj->getOwner().isValidPlayer()) e["objOwner"].Integer() = obj->getOwner().getNum();
+			if (obj->appearance) e["objDef"].String() = obj->appearance->animationFile.getName();
+			if (obj->appearance) e["printPriority"].Integer() = obj->appearance->printPriority;
+			arr.Vector().push_back(e);
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
 	if (queryType == "WrapperQueryRegion")
 	{
 		const int x0 = static_cast<int>(req["x0"].Integer());
@@ -593,6 +673,10 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				entry["y"].Integer() = y;
 				entry["z"].Integer() = z;
 				entry["terrain"].Integer() = tile.getTerrainID().getNum();
+				entry["terView"].Integer() = tile.terView;
+				entry["extTileFlags"].Integer() = tile.extTileFlags;
+				if (tile.hasRiver()) { entry["riverType"].Integer() = tile.getRiverID().getNum(); entry["riverDir"].Integer() = tile.riverDir; }
+				if (tile.hasRoad())  { entry["roadType"].Integer() = tile.getRoadID().getNum();  entry["roadDir"].Integer() = tile.roadDir; }
 				entry["blocked"].Bool() = tile.blocked();
 				entry["visitable"].Bool() = tile.visitable();
 				const auto topObj = tile.topVisitableObj();
@@ -603,6 +687,7 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 					{
 						entry["objType"].Integer() = obj->ID.getNum();
 						entry["objSubType"].Integer() = obj->subID.getNum();
+						if (obj->appearance) entry["objDef"].String() = obj->appearance->animationFile.getName();
 						if (obj->getOwner().isValidPlayer())
 							entry["objOwner"].Integer() = obj->getOwner().getNum();
 					}
@@ -705,6 +790,32 @@ void JsonAdapter::enrichOutbound(const std::shared_ptr<GameConnection> & game, c
 	// of the map as the player explores. Wrapped in try/catch since the
 	// reveal can fire very early in game-start and gameState may not be fully
 	// settled yet — better to lose enrichment than abort the whole pack.
+	// TryMoveHero: the FoW reveal during movement rides inside the pack
+	// (fowRevealed), NOT a separate FoWChange. Attach terrain per revealed tile
+	// as fowRevealedInfo (non-breaking; codec keeps the bare fowRevealed list).
+	if (auto * tmh = dynamic_cast<const TryMoveHero *>(&pack))
+	{
+		if (server.gh && server.gh->gs && !tmh->fowRevealed.empty())
+		{
+			const auto & map = server.gh->gs->getMap();
+			JsonNode & arr = out["fowRevealedInfo"];
+			arr.Vector();
+			for (const int3 & t : tmh->fowRevealed)
+			{
+				if (!map.isInTheMap(t)) continue;
+				const TerrainTile & tile = map.getTile(t);
+				JsonNode e;
+				e["x"].Integer() = t.x;
+				e["y"].Integer() = t.y;
+				e["z"].Integer() = t.z;
+				e["terrain"].Integer() = tile.getTerrainID().getNum();
+				e["terView"].Integer() = tile.terView;
+				e["extTileFlags"].Integer() = tile.extTileFlags;
+				e["blocked"].Bool() = tile.blocked();
+				arr.Vector().push_back(e);
+			}
+		}
+	}
 	if (auto * fow = dynamic_cast<const FoWChange *>(&pack))
 	{
 		logNetwork->info("[JsonAdapter] enriching FoWChange (tiles=%d, gh=%d, gs=%d)",
@@ -725,6 +836,10 @@ void JsonAdapter::enrichOutbound(const std::shared_ptr<GameConnection> & game, c
 					entry["y"].Integer() = t.y;
 					entry["z"].Integer() = t.z;
 					entry["terrain"].Integer() = tile.getTerrainID().getNum();
+					entry["terView"].Integer() = tile.terView;
+					entry["extTileFlags"].Integer() = tile.extTileFlags;
+					if (tile.hasRiver()) { entry["riverType"].Integer() = tile.getRiverID().getNum(); entry["riverDir"].Integer() = tile.riverDir; }
+					if (tile.hasRoad())  { entry["roadType"].Integer() = tile.getRoadID().getNum();  entry["roadDir"].Integer() = tile.roadDir; }
 					entry["blocked"].Bool() = tile.blocked();
 					entry["visitable"].Bool() = tile.visitable();
 					const auto topObj = tile.topVisitableObj();
@@ -737,6 +852,7 @@ void JsonAdapter::enrichOutbound(const std::shared_ptr<GameConnection> & game, c
 						{
 							entry["objType"].Integer() = obj->ID.getNum();
 							entry["objSubType"].Integer() = obj->subID.getNum();
+							if (obj->appearance) entry["objDef"].String() = obj->appearance->animationFile.getName();
 							if (obj->getOwner().isValidPlayer())
 								entry["objOwner"].Integer() = obj->getOwner().getNum();
 						}

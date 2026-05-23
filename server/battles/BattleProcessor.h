@@ -64,6 +64,11 @@ public:
 	/// Restart ongoing battle and end previous battle
 	void restartBattle(const BattleID & battleID, const CArmedInstance *army1, const CArmedInstance *army2, int3 tile, const CGHeroInstance *hero1, const CGHeroInstance *hero2, const BattleLayout & layout, const CGTownInstance *town);
 
+	/// homam-web fork: re-establish a battle restored from a save (currentBattles
+	/// is serialized, but the CBattleQuery and battle-flow state are not). Recreates
+	/// the query if missing and re-activates the flow so the battle resumes.
+	void resumeLoadedBattle(const BattleID & battleID);
+
 	/// Processing of incoming battle action netpack
 	bool makePlayerBattleAction(const BattleID & battleID, PlayerColor player, const BattleAction & ba);
 

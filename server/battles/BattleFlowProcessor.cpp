@@ -139,6 +139,16 @@ void BattleFlowProcessor::tryPlaceMoats(const CBattleInfoCallback & battle)
 	}
 }
 
+void BattleFlowProcessor::resumeFlow(const CBattleInfoCallback & battle)
+{
+	// homam-web fork: a battle restored from a save has no live flow state. The
+	// turn order / round / per-stack acted-flags are all in the serialized
+	// BattleInfo, so activateNextStack re-picks the active stack from there,
+	// re-broadcasts BattleSetActiveStack, and drives server-controlled stacks —
+	// exactly as if the previous action had just completed.
+	activateNextStack(battle);
+}
+
 void BattleFlowProcessor::onBattleStarted(const CBattleInfoCallback & battle)
 {
 	tryPlaceMoats(battle);

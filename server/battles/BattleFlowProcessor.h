@@ -77,6 +77,10 @@ public:
 	~BattleFlowProcessor();
 
 	void onBattleStarted(const CBattleInfoCallback & battle);
+	// homam-web fork: re-activate the stack loop for a battle restored from a save
+	// (resumes from the serialized turn-order/round state — re-broadcasts the
+	// active stack and drives server-controlled stacks). Just activateNextStack.
+	void resumeFlow(const CBattleInfoCallback & battle);
 	void onBattleEnded(const BattleID & battleID);
 	void onTacticsEnded(const CBattleInfoCallback & battle);
 	void onActionMade(const CBattleInfoCallback & battle, const BattleAction & ba);
