@@ -76,20 +76,6 @@ public:
 	std::unique_ptr<ServerAdventureAI> adventureAI; // homam-web fork: hosts AI-player turns
 	std::shared_ptr<CGameState> gs;
 
-	// homam-web fork: a battle a hosted AI initiated against a human who was NOT
-	// acting (their turn had already passed — async/sequential play). VCMI
-	// resolves battles synchronously within the attacker's turn; here we DEFER
-	// such a battle and re-initiate it at the start of the human defender's next
-	// turn so they play the defense. Stores object IDs so the real battle can be
-	// rebuilt. Not yet serialized — survives only within a server session.
-	struct PendingBattle
-	{
-		ObjectInstanceID army1, army2, hero1, hero2, town;
-		int3 tile;
-		PlayerColor defender;
-	};
-	std::vector<PendingBattle> pendingBattles;
-
 	// homam-web fork: DEBUG/TEST. When set (via the WrapperForceAIAttack debug
 	// command), the next hosted-AI player to start its turn is forced to attack
 	// the human's first hero through the real startBattle path — so the deferral

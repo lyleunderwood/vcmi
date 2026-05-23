@@ -332,10 +332,12 @@ void TurnOrderProcessor::doStartPlayerTurn(PlayerColor which)
 			onPlayerEndsTurn(which);
 	}
 
-	// homam-web fork: a human starting their turn first resolves any battles a
-	// hosted AI initiated against them while they were not acting (deferred from
-	// the AI's turn). They play the defense now. See CGameHandler::deferBattle.
-	if (isHuman)
+	// homam-web fork: resolve any battle a hosted AI deferred against this human
+	// (from the AI's turn) so they play the defense now — but ONLY if they're
+	// currently connected. If they're offline (async play, turn reached
+	// server-side while away), skip: the pending battle persists in gs and is
+	// resolved by onAdvInterfaceReady when they reconnect/load. See deferBattle.
+	if (isHuman && gameHandler->gameServer().getConnectionForPlayer(which) != GameConnectionID::INVALID)
 		gameHandler->resolveDeferredBattlesFor(which);
 }
 

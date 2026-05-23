@@ -58,6 +58,31 @@ public:
 	const GameCb * game() const final;
 };
 
+/// homam-web fork: a battle a hosted AI initiated against a human who was not
+/// acting (their turn had passed — async/sequential play). VCMI resolves battles
+/// synchronously within the attacker's turn; we DEFER such a battle and
+/// re-initiate it at the start of the human defender's next turn so they play the
+/// defense. Stored by object id so the real battle can be rebuilt. Lives in
+/// CGameState so it survives save/load (the deferred defense must persist into
+/// the "your turn" save the human loads).
+struct DLL_LINKAGE PendingBattle
+{
+	ObjectInstanceID army1, army2, hero1, hero2, town;
+	int3 tile;
+	PlayerColor defender;
+
+	template <typename Handler> void serialize(Handler & h)
+	{
+		h & army1;
+		h & army2;
+		h & hero1;
+		h & hero2;
+		h & town;
+		h & tile;
+		h & defender;
+	}
+};
+
 class DLL_LINKAGE CGameState : public CNonConstInfoCallback, public Serializeable
 {
 	friend class CGameStateCampaign;
@@ -78,6 +103,9 @@ public:
 	std::vector<std::unique_ptr<BattleInfo>> currentBattles;
 	/// ID that can be allocated to next battle
 	BattleID nextBattleID = BattleID(0);
+
+	/// homam-web fork: cross-player battles deferred to the defender's next turn.
+	std::vector<PendingBattle> pendingBattles;
 
 	//we have here all heroes available on this map that are not hired
 	std::unique_ptr<TavernHeroesPool> heroesPool;
@@ -219,6 +247,11 @@ public:
 			StatisticDataSet statistic;
 			h & statistic;
 		}
+
+		// homam-web fork: deferred cross-player battles (version-gated so older
+		// saves load fine — they simply have none).
+		if (h.hasFeature(Handler::Version::HOMAM_PENDING_BATTLES))
+			h & pendingBattles;
 
 		if(!h.saving && h.loadingGamestate)
 			restoreBonusSystemTree();

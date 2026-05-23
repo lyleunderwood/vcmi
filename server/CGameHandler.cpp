@@ -661,6 +661,14 @@ void CGameHandler::onAdvInterfaceReady(PlayerColor player)
 
 	logGlobal->trace("AdvInterfaceReady received for player %s", player);
 
+	// homam-web fork: a now-present human resolves any battle an AI deferred
+	// against them while they were away. This is the async-correct trigger — it
+	// fires when the human actually connects/loads and is ready to play (one turn
+	// per session), so the deferred defense persists in the save until then and
+	// is initiated only when they're here to play it. See CGameHandler::deferBattle.
+	if(turnOrder->isPlayerMakingTurn(player))
+		resolveDeferredBattlesFor(player);
+
 	// Kick top query for this player: if it's a dialog query waiting for UI, it should prompt now.
 	auto top = queries->topQuery(player);
 	if(!top)
@@ -4482,7 +4490,7 @@ void CGameHandler::deferBattle(const CArmedInstance * army1, const CArmedInstanc
 	const CGHeroInstance * hero1, const CGHeroInstance * hero2, const CGTownInstance * town)
 {
 	// Dedupe: a hosted AI's makeTurn may re-issue the same attack within its turn.
-	for(const auto & pb : pendingBattles)
+	for(const auto & pb : gs->pendingBattles)
 		if(pb.army1 == army1->id)
 		{
 			logGlobal->info("[deferBattle] attacker (obj %d) already has a pending battle; ignoring re-trigger", army1->id.getNum());
@@ -4497,7 +4505,7 @@ void CGameHandler::deferBattle(const CArmedInstance * army1, const CArmedInstanc
 	pb.town  = town ? town->id : ObjectInstanceID();
 	pb.tile  = tile;
 	pb.defender = army2->getOwner();
-	pendingBattles.push_back(pb);
+	gs->pendingBattles.push_back(pb);
 
 	logGlobal->info("[deferBattle] hosted-AI %s attacked offline human %s; battle deferred to the defender's next turn",
 		army1->getOwner().toString(), pb.defender.toString());
@@ -4505,16 +4513,16 @@ void CGameHandler::deferBattle(const CArmedInstance * army1, const CArmedInstanc
 
 void CGameHandler::resolveDeferredBattlesFor(PlayerColor defender)
 {
-	if(pendingBattles.empty())
+	if(gs->pendingBattles.empty())
 		return;
 
 	std::vector<PendingBattle> toRun;
-	for(auto it = pendingBattles.begin(); it != pendingBattles.end(); )
+	for(auto it = gs->pendingBattles.begin(); it != gs->pendingBattles.end(); )
 	{
 		if(it->defender == defender)
 		{
 			toRun.push_back(*it);
-			it = pendingBattles.erase(it);
+			it = gs->pendingBattles.erase(it);
 		}
 		else
 			++it;

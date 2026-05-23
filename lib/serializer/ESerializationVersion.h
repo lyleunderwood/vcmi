@@ -65,9 +65,11 @@ enum class ESerializationVersion : int32_t
 	CUSTOM_GARRISON_TITLE, // GarrisonDialog pack now has custom title parameter
 	LUA_SCRIPTS,
 
+	HOMAM_PENDING_BATTLES, // homam-web fork: cross-player battles deferred to the defender's turn
+
 	RELEASE_170 = HOTA_MAP_STACK_COUNT,
 	RELEASE_174 = CUSTOM_GARRISON_TITLE,
-	CURRENT = LUA_SCRIPTS,
+	CURRENT = HOMAM_PENDING_BATTLES,
 };
 
 static_assert(ESerializationVersion::MINIMAL <= ESerializationVersion::CURRENT, "Invalid serialization version definition!");
