@@ -617,7 +617,6 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		}
 		resp["player"].Integer() = player.getNum();
 
-		ResourceSet income; // accumulate daily income across towns
 		JsonNode & townsArr = resp["towns"];
 		townsArr.Vector();
 		for (const auto * t : ps->getTowns())
@@ -630,8 +629,16 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			e["position"]["y"].Integer() = t->visitablePos().y;
 			e["position"]["z"].Integer() = t->visitablePos().z;
 			townsArr.Vector().push_back(e);
-			income += t->dailyIncome();
 		}
+
+		// Daily income: sum every ownable object (towns + mines + gold-producing
+		// heroes), matching the engine's own Statistic::getIncome loop — but for
+		// the full ResourceSet, not just gold. Town-only accumulation previously
+		// dropped all mine resource income (wood/ore/etc.).
+		ResourceSet income;
+		for (const auto * obj : ps->getOwnedObjects())
+			if (const auto * own = obj->asOwnable())
+				income += own->dailyIncome();
 
 		JsonNode & heroesArr = resp["heroes"];
 		heroesArr.Vector();
