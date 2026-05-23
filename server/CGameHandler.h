@@ -78,10 +78,12 @@ public:
 
 	// homam-web fork: DEBUG/TEST. When set (via the WrapperForceAIAttack debug
 	// command), the next hosted-AI player to start its turn is forced to attack
-	// the human's first hero through the real startBattle path — so the deferral
-	// logic fires deterministically without depending on the AI's own decision
-	// to attack or on map proximity. Cleared after one use.
+	// the human (hero by default, or their town if debugForceAIAttackTown) through
+	// the real visit/startBattle path — so the deferral logic fires
+	// deterministically without depending on the AI's own decision to attack or
+	// on map proximity. Cleared after one use.
 	bool debugForceAIAttack = false;
+	bool debugForceAIAttackTown = false;
 
 	/// Record a cross-player battle to resolve on the defender's next turn.
 	void deferBattle(const CArmedInstance * army1, const CArmedInstance * army2, const int3 & tile,

@@ -372,12 +372,15 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 	if (queryType == "WrapperForceAIAttack")
 	{
 		// DEBUG/TEST: arm a one-shot — the next hosted-AI player's turn forces an
-		// attack on the human's hero through the real startBattle path, so the
-		// cross-player battle deferral fires deterministically (Phase 4 testing).
+		// attack on the human (their town if {town:true}, else their hero) through
+		// the real visit path, so the cross-player battle deferral fires
+		// deterministically (Phase 4 testing).
 		server.gh->debugForceAIAttack = true;
+		server.gh->debugForceAIAttackTown = req["town"].Bool(); // false if absent
 		JsonNode resp;
 		resp["type"].String() = "WrapperForceAIAttackArmed";
 		resp["armed"].Bool() = true;
+		resp["town"].Bool() = server.gh->debugForceAIAttackTown;
 		sendRawJson(sock, resp);
 		return;
 	}

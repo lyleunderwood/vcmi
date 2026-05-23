@@ -4530,23 +4530,39 @@ void CGameHandler::resolveDeferredBattlesFor(PlayerColor defender)
 
 	for(const auto & pb : toRun)
 	{
-		const auto * army1 = dynamic_cast<const CArmedInstance *>(gameInfo().getObj(pb.army1, false));
-		const auto * army2 = dynamic_cast<const CArmedInstance *>(gameInfo().getObj(pb.army2, false));
-		if(!army1 || !army2)
+		const auto * attacker = pb.hero1.hasValue() ? gameInfo().getHero(pb.hero1) : nullptr;
+		if(!attacker)
 		{
-			logGlobal->warn("[resolveDeferredBattles] attacker or defender army no longer exists; dropping deferred battle");
+			logGlobal->warn("[resolveDeferredBattles] attacker hero no longer exists; dropping deferred battle");
 			continue;
 		}
-		const auto * hero1 = pb.hero1.hasValue() ? gameInfo().getHero(pb.hero1) : nullptr;
-		const auto * hero2 = pb.hero2.hasValue() ? gameInfo().getHero(pb.hero2) : nullptr;
-		const auto * town  = pb.town.hasValue() ? dynamic_cast<const CGTownInstance *>(gameInfo().getObj(pb.town, false)) : nullptr;
 
-		logGlobal->info("[resolveDeferredBattles] starting deferred battle: defender %s now acting", defender.toString());
-		// The defender is now making their turn, so startBattle's deferral check
-		// passes through and the battle runs for real (human plays the defense,
-		// ServerBattleAI plays the hosted-AI attacker's stacks).
-		battles->startBattle(army1, army2, pb.tile, hero1, hero2,
-			BattleLayout::createDefaultLayout(gameInfo(), army1, army2), town);
+		// The defender object to (re)visit: the besieged town if any, else the
+		// defending hero. objectVisited redirects an enemy-hero-in-town visit to
+		// the town itself, so this covers sieges and field battles uniformly.
+		const CGObjectInstance * target = nullptr;
+		if(pb.town.hasValue())
+			target = gameInfo().getObj(pb.town, false);
+		else if(pb.hero2.hasValue())
+			target = gameInfo().getHero(pb.hero2);
+		if(!target)
+		{
+			logGlobal->warn("[resolveDeferredBattles] defender object no longer exists; dropping deferred battle");
+			continue;
+		}
+		if(getVisitingHero(target) != nullptr)
+		{
+			logGlobal->warn("[resolveDeferredBattles] object %d is already being visited; dropping deferred battle", target->id.getNum());
+			continue;
+		}
+
+		logGlobal->info("[resolveDeferredBattles] defender %s now acting — re-triggering attacker hero %d's visit of object %d",
+			defender.toString(), pb.hero1.getNum(), target->id.getNum());
+		// Re-run the visit through the normal path so MapObjectVisitQuery brackets
+		// the battle: capture-on-victory (town siege) and hero death fire as usual.
+		// The defender is now acting, so startBattle does NOT re-defer; ServerBattleAI
+		// plays the hosted-AI attacker's stacks while the human plays the defense.
+		objectVisited(target, attacker);
 	}
 }
 
@@ -4567,14 +4583,33 @@ void CGameHandler::debugTriggerAIAttackOnHuman(PlayerColor aiColor)
 		const auto * ps = gameInfo().getPlayerState(pi.first, false);
 		if(!ps || !ps->isHuman())
 			continue;
-		auto humanHeroes = ps->getHeroes();
-		if(humanHeroes.empty())
+
+		// Pick the target: the human's town (siege test) or their hero (field).
+		const CGObjectInstance * target = nullptr;
+		if(debugForceAIAttackTown)
+		{
+			auto towns = ps->getTowns();
+			if(!towns.empty())
+				target = towns.front();
+			else
+				logGlobal->warn("[debugForceAIAttack] human %s has no town; falling back to hero", pi.first.toString());
+		}
+		if(!target)
+		{
+			auto humanHeroes = ps->getHeroes();
+			if(!humanHeroes.empty())
+				target = humanHeroes.front();
+		}
+		if(!target)
 			continue;
-		logGlobal->info("[debugForceAIAttack] AI %s attacks human %s via real startBattle path", aiColor.toString(), pi.first.toString());
-		startBattle(aiHeroes.front(), humanHeroes.front());
+
+		logGlobal->info("[debugForceAIAttack] AI %s attacks human %s (object %d) via real visit path", aiColor.toString(), pi.first.toString(), target->id.getNum());
+		// Trigger through the real visit path so it goes onHeroVisit -> startBattle
+		// -> deferral, exactly as a natural AI move would.
+		objectVisited(target, aiHeroes.front());
 		return;
 	}
-	logGlobal->warn("[debugForceAIAttack] no human player with a hero found");
+	logGlobal->warn("[debugForceAIAttack] no human player with a town/hero found");
 }
 
 void CGameHandler::useChargeBasedSpell(const ObjectInstanceID & heroObjectID, const SpellID & spellID)
