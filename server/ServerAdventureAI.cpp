@@ -11,7 +11,9 @@
 
 #include "CGameHandler.h"
 #include "IGameServer.h"
+#include "CVCMIServer.h"
 
+#include "../lib/network/NetworkInterface.h"
 #include "../lib/callback/CCallback.h"
 #include "../lib/callback/CGlobalAI.h"
 #include "../lib/callback/CDynLibHandler.h"
@@ -21,20 +23,18 @@
 #include "../lib/StartInfo.h"
 #include "../lib/CPlayerState.h"
 #include "../lib/battle/BattleAction.h"
+#include "../lib/mapObjects/CGHeroInstance.h"
 
 #include <vcmi/Environment.h>
 
-// EmptyAI = stable (just ends the turn). Nullkiller2 PLAYS (moves heroes,
-// answers level-ups + blocking dialogs via the query routing in
-// CGameHandler::showBlockingDialog/heroLevelUp, visits & picks up objects) but
-// its turn still doesn't COMPLETE: after a HeroVisit/RemoveObject/PlayerBlocked
-// it hangs — NK2's status.waitTillFree() blocks on ongoingHeroMovement /
-// objectsBeingVisited, which only clear via IGameEventsReceiver callbacks
-// (heroMoved/heroVisit/...) we don't yet forward to the hosted AI (event
-// forwarding, the remaining Phase 3b work), and its hero's battles need
-// interaction coordination with ServerBattleAI. Flip to "Nullkiller2" to
-// resume. See docs/server-side-ai.md Phase 3b.
-static const std::string SERVER_ADVENTURE_AI = "EmptyAI";
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <future>
+
+// Which adventure AI to host. EmptyAI = no-op (auto-pass). Nullkiller2 = real
+// play. The AI's commands are applied on the io thread (see sendRequest) so the
+// async NK2 worker doesn't deadlock on re-entrant callbacks.
+static const std::string SERVER_ADVENTURE_AI = "Nullkiller2";
 
 std::optional<BattleAction> ServerAiClient::makeSurrenderRetreatDecision(PlayerColor, const BattleID &, const BattleStateInfoForRetreat &)
 {
@@ -58,7 +58,42 @@ int ServerAiClient::sendRequest(const CPackForServer & request, PlayerColor play
 		return requestID;
 	}
 
-	gameHandler->handleReceivedPack(conn, pack);
+	// Mirror CClient::sendRequest: notify the AI synchronously, BEFORE applying.
+	// NK2 uses requestSent to record a QueryReply's requestID->queryID mapping
+	// (attemptedAnsweringQuery); without it the later PackageApplied confirmation
+	// can't clear remainingQueries and status.waitTillFree() hangs forever.
+	if(auto ai = gameHandler->adventureAI->aiFor(player))
+		ai->requestSent(&pack, requestID);
+
+	if(!ioResolved)
+	{
+		ioResolved = true;
+		if(auto * srv = dynamic_cast<CVCMIServer *>(&gameHandler->gameServer()))
+			ioContext = &srv->getNetworkHandler().getContext();
+	}
+
+	if(!ioContext)
+	{
+		// No io_context (shouldn't happen with CVCMIServer) — apply inline.
+		gameHandler->handleReceivedPack(conn, pack);
+		return requestID;
+	}
+
+	// Apply on the io thread, blocking this (possibly AI-worker) thread until
+	// done. boost::asio::dispatch runs the lambda INLINE if we're already on the
+	// io thread (EmptyAI's synchronous yourTurn, or any io-thread caller), and
+	// POSTS it to the io thread otherwise (Nullkiller2's makeTurn worker). Either
+	// way the apply + the IGameEventsReceiver event callbacks (onPackApplied) run
+	// on the io thread — never re-entrantly inside the AI's makeTurn stack, which
+	// is what deadlocked NK2 against its own async query-answer tasks. We block
+	// until the apply completes so the AI sees the effect (matches waitTillRealize).
+	std::promise<void> done;
+	auto fut = done.get_future();
+	boost::asio::dispatch(*ioContext, [this, conn, &pack, &done]() {
+		gameHandler->handleReceivedPack(conn, pack);
+		done.set_value();
+	});
+	fut.wait();
 	return requestID;
 }
 
@@ -107,6 +142,43 @@ void ServerAdventureAI::deliverRealized(const PackageApplied & pa)
 	auto it = ais.find(pa.player);
 	if(it != ais.end())
 		it->second->requestRealized(const_cast<PackageApplied *>(&pa));
+}
+
+void ServerAdventureAI::onPackApplied(const CPackForClient & pack)
+{
+	if(ais.empty())
+		return;
+
+	// NOTE: we deliberately do NOT forward PlayerBlocked. The server only sends it
+	// with reason UPCOMING_BATTLE, which would set NK2's `battle` flag and gate
+	// status.waitTillFree() until a matching battleStart/battleEnd cycle clears it.
+	// But the hosted AI never plays its own battles — ServerBattleAI resolves them
+	// synchronously inside the triggering move's apply (the battle is over before
+	// sendRequest returns), so makeTurn can proceed immediately and must not block
+	// waiting on a battle it isn't driving. Forwarding it would hang the turn.
+
+	// HeroVisit start/end: push/pop NK2's objectsBeingVisited. objId is only
+	// meaningful on the START pack — heroVisit(end) just pops, so null is fine.
+	if(const auto * hv = dynamic_cast<const HeroVisit *>(&pack))
+	{
+		if(auto ai = aiFor(hv->player))
+		{
+			const auto * hero = gameHandler->gs->getHero(hv->heroId);
+			const auto * obj = hv->starting ? gameHandler->gs->getObjInstance(hv->objId) : nullptr;
+			ai->heroVisit(hero, obj, hv->starting);
+		}
+		return;
+	}
+
+	// TryMoveHero: NK2 invalidates its pathfinder cache + tracks teleports/boats.
+	if(const auto * tmh = dynamic_cast<const TryMoveHero *>(&pack))
+	{
+		const auto * hero = gameHandler->gs->getHero(tmh->id);
+		if(hero)
+			if(auto ai = aiFor(hero->getOwner()))
+				ai->heroMoved(*tmh, true);
+		return;
+	}
 }
 
 std::shared_ptr<CGlobalAI> ServerAdventureAI::aiFor(PlayerColor player) const

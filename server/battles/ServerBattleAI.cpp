@@ -7,6 +7,7 @@
 #include "ServerBattleAI.h"
 
 #include "../CGameHandler.h"
+#include "../ServerAdventureAI.h"
 
 #include "../../lib/CStack.h"
 #include "../../lib/battle/BattleAction.h"
@@ -56,7 +57,14 @@ bool ServerBattleAI::shouldDrivePlayer(PlayerColor player) const
 	// wrapper-toggled session preference. Either makes us drive every side.
 	if (driveAllSides || gameHandler->battleAutoResolve)
 		return true;
-	return player == PlayerColor::NEUTRAL;
+	if (player == PlayerColor::NEUTRAL)
+		return true;
+	// homam-web fork: a player whose adventure turn is hosted in-process
+	// (ServerAdventureAI) has no client to run a battle AI, so the server plays
+	// its battle stacks too — leaving only real human players to play manually.
+	if (gameHandler->adventureAI && gameHandler->adventureAI->isDriven(player))
+		return true;
+	return false;
 }
 
 ServerBattleAI::PlayerAI & ServerBattleAI::getOrCreate(const CBattleInfoCallback & battle, PlayerColor owner)

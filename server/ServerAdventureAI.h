@@ -21,10 +21,13 @@
 #include <condition_variable>
 #include <mutex>
 
+namespace boost::asio { class io_context; }
+
 VCMI_LIB_NAMESPACE_BEGIN
 class CGlobalAI;
 class CCallback;
 struct PackageApplied;
+struct CPackForClient;
 VCMI_LIB_NAMESPACE_END
 
 class CGameHandler;
@@ -41,6 +44,13 @@ public:
 private:
 	CGameHandler * gameHandler;
 	int requestCounter = 1;
+	// The server's single io_context. A hosted async AI (Nullkiller2) runs
+	// makeTurn on a TBB worker thread; we apply its commands ON the io thread
+	// (boost::asio::dispatch) and block the worker until done, so apply + event
+	// callbacks never fire re-entrantly inside makeTurn (which deadlocks NK2).
+	// Resolved lazily; null => fall back to a synchronous apply.
+	boost::asio::io_context * ioContext = nullptr;
+	bool ioResolved = false;
 };
 
 class ServerAdventureAI
@@ -60,6 +70,13 @@ public:
 	/// learns its command was applied — NK2 needs the EndTurn confirmation
 	/// (requestRealized -> status.madeTurn) to stop re-requesting end-of-turn.
 	void deliverRealized(const PackageApplied & pa);
+
+	/// Forward an applied client-pack to the hosted AIs as the matching
+	/// IGameEventsReceiver event (heroMoved/heroVisit/playerBlocked). NK2 tracks
+	/// ongoingHeroMovement/objectsBeingVisited/battle from these and blocks its
+	/// turn (status.waitTillFree) until they clear. Safe now that the AI's
+	/// commands apply on the io thread, so these fire there too (not re-entrant).
+	void onPackApplied(const CPackForClient & pack);
 
 	/// Drive the player's adventure turn (calls the AI's yourTurn). Returns
 	/// false if no AI is installed for the player (caller should fall back to

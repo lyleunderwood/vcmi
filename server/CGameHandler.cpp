@@ -1542,12 +1542,23 @@ void CGameHandler::heroExchange(ObjectInstanceID hero1, ObjectInstanceID hero2)
 
 		useScholarSkill(hero1,hero2);
 		queries->addQuery(exchange);
+
+		// homam-web fork: a server-hosted AI gets no client-side exchange screen,
+		// so deliver the heroExchangeStarted callback directly. Without it NK2's
+		// remainingQueries keeps this query and status.waitTillFree() hangs.
+		if(auto ai = adventureAI->aiFor(h1->getOwner()))
+			ai->heroExchangeStarted(hero1, hero2, exchange->queryID);
 	}
 }
 
 void CGameHandler::sendAndApply(CPackForClient & pack)
 {
 	gameServer().applyPack(pack);
+	// homam-web fork: forward the applied pack to any server-hosted AI as the
+	// matching IGameEventsReceiver event (movement/visit/battle state). Safe
+	// because the hosted AI's commands apply on the io thread (ServerAiClient),
+	// so this runs on the io thread too, not re-entrantly in the AI's makeTurn.
+	adventureAI->onPackApplied(pack);
 }
 
 void CGameHandler::sendAndApply(CGarrisonOperationPack & pack)
