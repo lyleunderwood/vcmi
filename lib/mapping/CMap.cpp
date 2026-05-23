@@ -151,7 +151,10 @@ TerrainTile::TerrainTile():
 
 bool TerrainTile::isClear(const TerrainTile * from) const
 {
-	return entrableTerrain(from) && !blocked();
+	// homam-web fork: `from` defaults to nullptr, but entrableTerrain(from)
+	// dereferences it (from->getTerrain()) — so isClear() with no argument
+	// segfaults. Fall back to the no-origin terrain check when from is null.
+	return (from ? entrableTerrain(from) : entrableTerrain()) && !blocked();
 }
 
 ObjectInstanceID TerrainTile::topVisitableObj(bool excludeTop) const
