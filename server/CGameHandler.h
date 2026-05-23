@@ -76,6 +76,36 @@ public:
 	std::unique_ptr<ServerAdventureAI> adventureAI; // homam-web fork: hosts AI-player turns
 	std::shared_ptr<CGameState> gs;
 
+	// homam-web fork: a battle a hosted AI initiated against a human who was NOT
+	// acting (their turn had already passed — async/sequential play). VCMI
+	// resolves battles synchronously within the attacker's turn; here we DEFER
+	// such a battle and re-initiate it at the start of the human defender's next
+	// turn so they play the defense. Stores object IDs so the real battle can be
+	// rebuilt. Not yet serialized — survives only within a server session.
+	struct PendingBattle
+	{
+		ObjectInstanceID army1, army2, hero1, hero2, town;
+		int3 tile;
+		PlayerColor defender;
+	};
+	std::vector<PendingBattle> pendingBattles;
+
+	// homam-web fork: DEBUG/TEST. When set (via the WrapperForceAIAttack debug
+	// command), the next hosted-AI player to start its turn is forced to attack
+	// the human's first hero through the real startBattle path — so the deferral
+	// logic fires deterministically without depending on the AI's own decision
+	// to attack or on map proximity. Cleared after one use.
+	bool debugForceAIAttack = false;
+
+	/// Record a cross-player battle to resolve on the defender's next turn.
+	void deferBattle(const CArmedInstance * army1, const CArmedInstance * army2, const int3 & tile,
+		const CGHeroInstance * hero1, const CGHeroInstance * hero2, const CGTownInstance * town);
+	/// Start any battles deferred to this (now-acting) defender. Called at turn start.
+	void resolveDeferredBattlesFor(PlayerColor defender);
+	/// DEBUG/TEST: force this AI player's hero to attack a human's hero via the
+	/// real startBattle path (drives the Phase 4 deferral deterministically).
+	void debugTriggerAIAttackOnHuman(PlayerColor aiColor);
+
 	//use enums as parameters, because doMove(sth, true, false, true) is not readable
 	enum EGuardLook {CHECK_FOR_GUARDS, IGNORE_GUARDS};
 	enum EVisitDest {VISIT_DEST, DONT_VISIT_DEST};

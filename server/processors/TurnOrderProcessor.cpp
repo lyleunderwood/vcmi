@@ -319,9 +319,24 @@ void TurnOrderProcessor::doStartPlayerTurn(PlayerColor which)
 	//   2. Fallback: bare auto-pass (immediately end the empty turn).
 	if (!isHuman && hasHumanInGame())
 	{
+		// homam-web fork: DEBUG (Phase 4 test) — force this AI to attack the human
+		// before it plays, exercising the cross-player battle deferral. The human
+		// is not making turn, so startBattle defers to their next turn.
+		if (gameHandler->debugForceAIAttack)
+		{
+			gameHandler->debugForceAIAttack = false;
+			gameHandler->debugTriggerAIAttackOnHuman(which);
+		}
+
 		if (!gameHandler->adventureAI->driveTurn(which, QueryID::NONE))
 			onPlayerEndsTurn(which);
 	}
+
+	// homam-web fork: a human starting their turn first resolves any battles a
+	// hosted AI initiated against them while they were not acting (deferred from
+	// the AI's turn). They play the defense now. See CGameHandler::deferBattle.
+	if (isHuman)
+		gameHandler->resolveDeferredBattlesFor(which);
 }
 
 bool TurnOrderProcessor::hasHumanInGame() const

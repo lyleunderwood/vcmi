@@ -15,6 +15,8 @@
 #include "BattleResultProcessor.h"
 
 #include "../CGameHandler.h"
+#include "../ServerAdventureAI.h"
+#include "../processors/TurnOrderProcessor.h"
 #include "../queries/QueriesProcessor.h"
 #include "../queries/BattleQueries.h"
 
@@ -99,6 +101,24 @@ void BattleProcessor::restartBattle(const BattleID & battleID, const CArmedInsta
 void BattleProcessor::startBattle(const CArmedInstance *army1, const CArmedInstance *army2, int3 tile,
 								const CGHeroInstance *hero1, const CGHeroInstance *hero2, const BattleLayout & layout, const CGTownInstance *town)
 {
+	// homam-web fork: defer a battle a hosted AI initiates against a human who is
+	// not currently acting (their turn already passed). VCMI battles are
+	// synchronous within the attacker's turn; for async play we re-initiate this
+	// at the start of the human defender's next turn so they play the defense.
+	// Scoped to AI-attacker-vs-offline-human only (human PvP is left untouched).
+	{
+		const PlayerColor attacker = army1->getOwner();
+		const PlayerColor defender = army2->getOwner();
+		const auto * defState = gameHandler->gameInfo().getPlayerState(defender, false);
+		if(defState && defState->isHuman()
+			&& gameHandler->adventureAI->isDriven(attacker)
+			&& !gameHandler->turnOrder->isPlayerMakingTurn(defender))
+		{
+			gameHandler->deferBattle(army1, army2, tile, hero1, hero2, town);
+			return;
+		}
+	}
+
 	assert(gameHandler->gameState().getBattle(army1->getOwner()) == nullptr);
 	assert(gameHandler->gameState().getBattle(army2->getOwner()) == nullptr);
 

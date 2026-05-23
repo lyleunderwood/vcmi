@@ -63,6 +63,7 @@
 #include "../lib/mapObjects/CGHeroInstance.h"
 #include "../lib/mapObjects/CGTownInstance.h"
 #include "../lib/mapObjects/MiscObjects.h"
+#include "../lib/battle/BattleLayout.h"
 #include "../lib/mapObjectConstructors/AObjectTypeHandler.h"
 #include "../lib/mapObjectConstructors/CObjectClassesHandler.h"
 
@@ -4475,6 +4476,97 @@ void CGameHandler::startBattle(const CArmedInstance *army1, const CArmedInstance
 void CGameHandler::startBattle(const CArmedInstance *army1, const CArmedInstance *army2 )
 {
 	battles->startBattle(army1, army2);
+}
+
+void CGameHandler::deferBattle(const CArmedInstance * army1, const CArmedInstance * army2, const int3 & tile,
+	const CGHeroInstance * hero1, const CGHeroInstance * hero2, const CGTownInstance * town)
+{
+	// Dedupe: a hosted AI's makeTurn may re-issue the same attack within its turn.
+	for(const auto & pb : pendingBattles)
+		if(pb.army1 == army1->id)
+		{
+			logGlobal->info("[deferBattle] attacker (obj %d) already has a pending battle; ignoring re-trigger", army1->id.getNum());
+			return;
+		}
+
+	PendingBattle pb;
+	pb.army1 = army1->id;
+	pb.army2 = army2->id;
+	pb.hero1 = hero1 ? hero1->id : ObjectInstanceID();
+	pb.hero2 = hero2 ? hero2->id : ObjectInstanceID();
+	pb.town  = town ? town->id : ObjectInstanceID();
+	pb.tile  = tile;
+	pb.defender = army2->getOwner();
+	pendingBattles.push_back(pb);
+
+	logGlobal->info("[deferBattle] hosted-AI %s attacked offline human %s; battle deferred to the defender's next turn",
+		army1->getOwner().toString(), pb.defender.toString());
+}
+
+void CGameHandler::resolveDeferredBattlesFor(PlayerColor defender)
+{
+	if(pendingBattles.empty())
+		return;
+
+	std::vector<PendingBattle> toRun;
+	for(auto it = pendingBattles.begin(); it != pendingBattles.end(); )
+	{
+		if(it->defender == defender)
+		{
+			toRun.push_back(*it);
+			it = pendingBattles.erase(it);
+		}
+		else
+			++it;
+	}
+
+	for(const auto & pb : toRun)
+	{
+		const auto * army1 = dynamic_cast<const CArmedInstance *>(gameInfo().getObj(pb.army1, false));
+		const auto * army2 = dynamic_cast<const CArmedInstance *>(gameInfo().getObj(pb.army2, false));
+		if(!army1 || !army2)
+		{
+			logGlobal->warn("[resolveDeferredBattles] attacker or defender army no longer exists; dropping deferred battle");
+			continue;
+		}
+		const auto * hero1 = pb.hero1.hasValue() ? gameInfo().getHero(pb.hero1) : nullptr;
+		const auto * hero2 = pb.hero2.hasValue() ? gameInfo().getHero(pb.hero2) : nullptr;
+		const auto * town  = pb.town.hasValue() ? dynamic_cast<const CGTownInstance *>(gameInfo().getObj(pb.town, false)) : nullptr;
+
+		logGlobal->info("[resolveDeferredBattles] starting deferred battle: defender %s now acting", defender.toString());
+		// The defender is now making their turn, so startBattle's deferral check
+		// passes through and the battle runs for real (human plays the defense,
+		// ServerBattleAI plays the hosted-AI attacker's stacks).
+		battles->startBattle(army1, army2, pb.tile, hero1, hero2,
+			BattleLayout::createDefaultLayout(gameInfo(), army1, army2), town);
+	}
+}
+
+void CGameHandler::debugTriggerAIAttackOnHuman(PlayerColor aiColor)
+{
+	const auto * aiState = gameInfo().getPlayerState(aiColor, false);
+	if(!aiState)
+		return;
+	auto aiHeroes = aiState->getHeroes();
+	if(aiHeroes.empty())
+	{
+		logGlobal->warn("[debugForceAIAttack] AI %s has no hero to attack with", aiColor.toString());
+		return;
+	}
+
+	for(const auto & pi : gameInfo().getStartInfo()->playerInfos)
+	{
+		const auto * ps = gameInfo().getPlayerState(pi.first, false);
+		if(!ps || !ps->isHuman())
+			continue;
+		auto humanHeroes = ps->getHeroes();
+		if(humanHeroes.empty())
+			continue;
+		logGlobal->info("[debugForceAIAttack] AI %s attacks human %s via real startBattle path", aiColor.toString(), pi.first.toString());
+		startBattle(aiHeroes.front(), humanHeroes.front());
+		return;
+	}
+	logGlobal->warn("[debugForceAIAttack] no human player with a hero found");
 }
 
 void CGameHandler::useChargeBasedSpell(const ObjectInstanceID & heroObjectID, const SpellID & spellID)

@@ -369,6 +369,19 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperForceAIAttack")
+	{
+		// DEBUG/TEST: arm a one-shot — the next hosted-AI player's turn forces an
+		// attack on the human's hero through the real startBattle path, so the
+		// cross-player battle deferral fires deterministically (Phase 4 testing).
+		server.gh->debugForceAIAttack = true;
+		JsonNode resp;
+		resp["type"].String() = "WrapperForceAIAttackArmed";
+		resp["armed"].Bool() = true;
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperPopQuery")
 	{
 		// Hard escape: forcibly remove a query from the QueriesProcessor.
