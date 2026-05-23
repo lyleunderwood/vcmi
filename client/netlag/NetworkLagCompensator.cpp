@@ -174,6 +174,13 @@ bool NetworkLagCompensator::hasBothPlayersAtSameConnection(PlayerColor left, Pla
 	return false; // TODO?
 }
 
+GameConnectionID NetworkLagCompensator::getConnectionForPlayer(PlayerColor player) const
+{
+	// homam-web fork: only the server-side ServerAdventureAI uses this; the
+	// client-side lag compensator wraps a single connection.
+	return GameConnectionID::FIRST_CONNECTION;
+}
+
 void NetworkLagCompensator::applyPack(CPackForClient & pack)
 {
 	PackRollbackGeneratorVisitor visitor(*gameState);

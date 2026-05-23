@@ -37,6 +37,7 @@ class NetworkLagCompensator final : public IGameServer, public INetworkConnectio
 	bool isPlayerHost(const PlayerColor & color) const override;
 	bool hasPlayerAt(PlayerColor player, GameConnectionID connection) const override;
 	bool hasBothPlayersAtSameConnection(PlayerColor left, PlayerColor right) const override;
+	GameConnectionID getConnectionForPlayer(PlayerColor player) const override;
 	void applyPack(CPackForClient & pack) override;
 	void sendPack(CPackForClient & pack, GameConnectionID connectionID) override;
 
