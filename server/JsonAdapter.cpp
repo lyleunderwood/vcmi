@@ -1191,16 +1191,26 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 					if (!tileGuards.empty())
 					{
 						bool guardVisible = false;
-						uint64_t gstr = 0;
+						JsonNode guardArmy; guardArmy.Vector();
 						for (const auto * g : tileGuards)
 						{
-							if (server.gh->gs->isVisibleFor(g, hero->getOwner())) guardVisible = true;
-							if (const auto * ai = dynamic_cast<const CArmedInstance *>(g)) gstr += ai->getArmyStrength();
+							if (!server.gh->gs->isVisibleFor(g, hero->getOwner())) continue;
+							guardVisible = true;
+							if (const auto * ai = dynamic_cast<const CArmedInstance *>(g))
+								for (const auto & slot : ai->Slots())
+								{
+									const auto & st = slot.second;
+									if (!st || !st->getCreature()) continue;
+									JsonNode b;
+									b["creature"].String() = st->getCreature()->getNamePluralTranslated();
+									b["count"].String() = CCreature::getQuantityRangeStringForId(st->getQuantityID());
+									guardArmy.Vector().push_back(b);
+								}
 						}
 						if (guardVisible)
 						{
 							entry["guarded"].Bool() = true;
-							entry["guardStrength"].Integer() = static_cast<int64_t>(gstr);
+							entry["guardArmy"] = guardArmy;
 						}
 					}
 					tiles.Vector().push_back(entry);
