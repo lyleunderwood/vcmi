@@ -253,6 +253,11 @@ public:
 		if (h.hasFeature(Handler::Version::HOMAM_PENDING_BATTLES))
 			h & pendingBattles;
 
+		// homam-web fork: persist active battles so a save taken mid-combat
+		// restores the live battle on load (BattleInfo has a full serializer).
+		if (h.hasFeature(Handler::Version::HOMAM_LIVE_BATTLES))
+			h & currentBattles;
+
 		if(!h.saving && h.loadingGamestate)
 			restoreBonusSystemTree();
 	}

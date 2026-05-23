@@ -66,10 +66,11 @@ enum class ESerializationVersion : int32_t
 	LUA_SCRIPTS,
 
 	HOMAM_PENDING_BATTLES, // homam-web fork: cross-player battles deferred to the defender's turn
+	HOMAM_LIVE_BATTLES, // homam-web fork: active battles (currentBattles) persisted into the save
 
 	RELEASE_170 = HOTA_MAP_STACK_COUNT,
 	RELEASE_174 = CUSTOM_GARRISON_TITLE,
-	CURRENT = HOMAM_PENDING_BATTLES,
+	CURRENT = HOMAM_LIVE_BATTLES,
 };
 
 static_assert(ESerializationVersion::MINIMAL <= ESerializationVersion::CURRENT, "Invalid serialization version definition!");

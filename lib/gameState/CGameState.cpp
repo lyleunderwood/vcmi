@@ -33,6 +33,8 @@
 #include "../bonuses/Propagators.h"
 #include "../bonuses/Updaters.h"
 #include "../battle/BattleInfo.h"
+#include "../CStack.h"                       // homam-web fork: complete types needed to
+#include "../battle/CObstacleInstance.h"     // serialize BattleInfo (currentBattles) here
 #include "../callback/IGameInfoCallback.h"
 #include "../callback/IGameRandomizer.h"
 #include "../campaign/CampaignState.h"

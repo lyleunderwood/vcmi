@@ -56,6 +56,11 @@ bool CBattleQuery::blocksPack(const CPackForServer * pack) const
 	if(dynamic_cast<const GamePause*>(pack) != nullptr)
 		return false;
 
+	// homam-web fork: SaveGame is read-only — allow it mid-battle so an
+	// async game can be persisted while a battle is paused awaiting a player.
+	if(dynamic_cast<const SaveGame*>(pack) != nullptr)
+		return false;
+
 	return true;
 }
 
