@@ -1080,6 +1080,15 @@ void JsonAdapter::enrichOutbound(const std::shared_ptr<GameConnection> & game, c
 		arr.Vector();
 		for (PlayerColor color : players)
 		{
+			// homam-web fork: a JSON client only drives the HUMAN players. On
+			// LOAD the engine assigns the sole connection every player slot
+			// (incl. AI players and a bogus -1), but the AI players are driven
+			// in-process by ServerAdventureAI — reporting them as "yours" makes
+			// the wrapper treat their pending dialogs/turns as the human's
+			// (e.g. a false ACTIVE_DIALOG from an AI's BlockingDialog).
+			const auto * ps = (server.gh && server.gh->gs) ? server.gh->gs->getPlayerState(color, false) : nullptr;
+			if (!ps || !ps->isHuman())
+				continue;
 			JsonNode entry;
 			entry.Integer() = color.getNum();
 			arr.Vector().push_back(entry);
