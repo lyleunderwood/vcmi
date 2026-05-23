@@ -22,6 +22,7 @@
 #include "../lib/networkPacks/PacksForClient.h"
 #include "../lib/gameState/CGameState.h"
 #include "../lib/battle/BattleInfo.h"
+#include "../lib/CStack.h"
 #include "../lib/mapping/CMap.h"
 #include "../lib/mapping/TerrainTile.h"
 #include "../lib/mapObjects/CGHeroInstance.h"
@@ -42,6 +43,23 @@
 // BattleInfo into the same JSON shape the BattleStart codec emits, so we can
 // synthesize a resume payload the wrapper's existing BattleStart handler accepts.
 void emitBattleInfo(const BattleInfo & bi, JsonNode & out);
+
+// homam-web fork: [{slot, creatureId, count}] for any army (town garrison or a
+// hero). Used by WrapperQueryTown's full-state fields.
+static void emitCreatureSet(const CCreatureSet & army, JsonNode & out)
+{
+	out.Vector();
+	for (const auto & slotPair : army.Slots())
+	{
+		const SlotID slot = slotPair.first;
+		const CCreature * cre = army.getCreature(slot);
+		JsonNode e;
+		e["slot"].Integer() = slot.getNum();
+		e["creatureId"].Integer() = cre ? cre->getId().getNum() : -1;
+		e["count"].Integer() = army.getStackCount(slot);
+		out.Vector().push_back(e);
+	}
+}
 
 JsonAdapter::JsonAdapter(CVCMIServer & srv) : server(srv) {}
 JsonAdapter::~JsonAdapter() = default;
@@ -417,6 +435,57 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			}
 			dwellings.Vector().push_back(d);
 		}
+
+		// homam-web fork: full town state for the town screen (additive — the
+		// fields above are unchanged). See docs/screens/town.md.
+		resp["faction"].Integer() = town->getFactionID().getNum();
+		resp["fortLevel"].Integer() = static_cast<int>(town->fortLevel());
+		resp["hallLevel"].Integer() = town->hallLevel();
+		resp["builtThisTurn"].Bool() = town->built > 0;
+		resp["goldIncome"].Integer() = town->dailyIncome()[GameResID::GOLD];
+
+		// Town's own garrison stacks (a garrisoned hero's army is reported
+		// separately under garrisonHero).
+		JsonNode garrison;
+		emitCreatureSet(*town, garrison);
+		resp["garrison"] = garrison;
+
+		const auto emitTownHero = [&](const CGHeroInstance * h, JsonNode & out)
+		{
+			if (!h)
+				return; // leave field absent (null)
+			out["id"].Integer() = h->id.getNum();
+			out["name"].String() = h->getNameTranslated();
+			if (h->getOwner().isValidPlayer())
+				out["owner"].Integer() = h->getOwner().getNum();
+			JsonNode army;
+			emitCreatureSet(*h, army);
+			out["army"] = army;
+		};
+		emitTownHero(town->getGarrisonHero(), resp["garrisonHero"]);
+		emitTownHero(town->getVisitingHero(), resp["visitingHero"]);
+
+		// Mage guild: level + the spells available at each guild level.
+		JsonNode & mageGuild = resp["mageGuild"];
+		mageGuild["level"].Integer() = town->mageGuildLevel();
+		JsonNode & guildSpells = mageGuild["spells"];
+		guildSpells.Vector();
+		for (const auto & levelSpells : town->spells)
+		{
+			JsonNode lvl;
+			lvl.Vector();
+			for (const SpellID & sp : levelSpells)
+			{
+				JsonNode s;
+				s.Integer() = sp.getNum();
+				lvl.Vector().push_back(s);
+			}
+			guildSpells.Vector().push_back(lvl);
+		}
+		// NOTE: the proposed `buildable` build-state table (EBuildingState
+		// coloring) is intentionally omitted for now — the doc marks it optional
+		// and the client can approximate from `buildings` + costs.
+
 		sendRawJson(sock, resp);
 		return;
 	}
@@ -448,6 +517,73 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		resp["type"].String() = "WrapperForceAIAttackArmed";
 		resp["armed"].Bool() = true;
 		resp["town"].Bool() = server.gh->debugForceAIAttackTown;
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperQueryBattle")
+	{
+		// homam-web fork: a join/bootstrap SNAPSHOT of the current battle for the
+		// battle screen. Deltas already arrive as normal battle packs
+		// (BattleStackMoved/BattleAttack/…); this is just what a fresh client needs
+		// to render before the first delta. Base shape (battleId, round, sides,
+		// obstacles, siege, battlefield, tile, tactics) reuses emitBattleInfo; the
+		// `stacks` array is REPLACED with live per-unit runtime that the
+		// BattleStart codec (starting-state only) doesn't carry. See
+		// docs/screens/battle.md. Optional `battleId` selects among multiple.
+		JsonNode resp;
+		resp["type"].String() = "WrapperBattle";
+		const BattleInfo * bi = nullptr;
+		if (server.gh && server.gh->gs)
+		{
+			if (req["battleId"].isNumber())
+				bi = server.gh->gs->getBattle(BattleID(static_cast<int32_t>(req["battleId"].Integer())));
+			else if (!server.gh->gs->currentBattles.empty() && server.gh->gs->currentBattles.front())
+				bi = server.gh->gs->currentBattles.front().get();
+		}
+		if (!bi)
+		{
+			resp["error"].String() = "no active battle";
+			sendRawJson(sock, resp);
+			return;
+		}
+
+		// Base shape (reuses the BattleStart serializer); then enrich `stacks`.
+		JsonNode info;
+		emitBattleInfo(*bi, info);
+		info["activeUnit"].Integer() = bi->activeStack;
+
+		// Build a fresh stacks array with live state. NB: JsonNode::Vector() does
+		// NOT clear an already-populated vector (emitBattleInfo filled the
+		// starting-state shape), so build a new node and overwrite the key.
+		JsonNode stacks;
+		stacks.Vector();
+		for (const auto & stPtr : bi->stacks)
+		{
+			if (!stPtr) continue;
+			const CStack & st = *stPtr;
+			JsonNode e;
+			e["unitId"].Integer() = static_cast<int64_t>(st.unitId());
+			e["side"].Integer() = (st.unitSide() == BattleSide::DEFENDER) ? 1 : 0;
+			e["creatureId"].Integer() = (st.unitType() ? st.unitType()->getId().getNum() : -1);
+			e["count"].Integer() = st.getCount();
+			e["baseCount"].Integer() = static_cast<int64_t>(st.unitBaseAmount());
+			e["firstHPleft"].Integer() = st.getFirstHPleft();
+			e["position"].Integer() = st.getPosition().toInt();
+			e["alive"].Bool() = st.alive();
+			e["doubleWide"].Bool() = st.doubleWide();
+			e["canShoot"].Bool() = st.canShoot();
+			e["shots"].Integer() = st.shots.available();
+			e["defended"].Bool() = st.defended();
+			e["movedThisRound"].Bool() = st.moved();
+			e["retaliationsLeft"].Integer() = st.counterAttacks.available();
+			e["isActive"].Bool() = (bi->activeStack == static_cast<int32_t>(st.unitId()));
+			stacks.Vector().push_back(e);
+		}
+		info["stacks"] = stacks; // overwrite the starting-state shape
+
+		// Fold the enriched battle info into the response.
+		resp["battle"] = info;
 		sendRawJson(sock, resp);
 		return;
 	}
