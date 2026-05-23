@@ -631,6 +631,133 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperQueryNav")
+	{
+		// homam-web fork: a NAVIGATION GRAPH for a hero — far easier for an agent
+		// to reason about than a raw tile map. Returns (1) POIs: objects the hero's
+		// owner has seen (towns/heroes/mines/resources/artifacts/monsters/
+		// dwellings/garrisons), and (2) FRONTIERS: explored tiles adjacent to fog,
+		// clustered to bucket centers (explore-here nodes). Every node carries
+		// reachability + turns from the engine pathfinder, so the agent can just
+		// pick a node and `march` to it. FoW-faithful (only visible objects /
+		// explored frontier tiles).
+		const int heroId = static_cast<int>(req["heroId"].Integer());
+		JsonNode resp;
+		resp["type"].String() = "WrapperNav";
+		resp["heroId"].Integer() = heroId;
+		const auto * hero = server.gh->gs->getHero(ObjectInstanceID(heroId));
+		if (!hero)
+		{
+			resp["error"].String() = "no such hero";
+			sendRawJson(sock, resp);
+			return;
+		}
+		const PlayerColor owner = hero->getOwner();
+		const auto & nmap = server.gh->gs->getMap();
+
+		CPathsInfo navPaths(int3(nmap.width, nmap.height, nmap.levels()), hero);
+		auto navCfg = std::make_shared<SingleHeroPathfinderConfig>(navPaths, server.gh->gameInfo(), hero);
+		navCfg->options.ignoreGuards = true;
+		server.gh->gs->calculatePaths(navCfg);
+
+		// Reachability of a tile, or (for blocked object tiles) its nearest
+		// reachable neighbour. Returns reachable + turns (-1 if not).
+		const auto reachOf = [&](const int3 & t, bool & reachable, int & turns)
+		{
+			reachable = false; turns = -1;
+			const CGPathNode * n = navPaths.getNode(t);
+			if (n && n->theNodeBefore) { reachable = true; turns = n->turns; return; }
+			int best = std::numeric_limits<int>::max();
+			for (const int3 & d : int3::getDirs())
+			{
+				const int3 c = t + d;
+				if (!nmap.isInTheMap(c)) continue;
+				const CGPathNode * nn = navPaths.getNode(c);
+				if (nn && nn->theNodeBefore) { reachable = true; best = std::min(best, static_cast<int>(nn->turns)); }
+			}
+			if (reachable) turns = best;
+		};
+
+		// (1) POIs — visible objects of interest.
+		JsonNode & pois = resp["pois"];
+		pois.Vector();
+		for (const auto * obj : nmap.getObjects())
+		{
+			if (!obj || obj->id == hero->id) continue;
+			const auto oid = obj->ID;
+			const bool interesting =
+				oid == Obj::TOWN || oid == Obj::HERO || oid == Obj::MINE ||
+				oid == Obj::RESOURCE || oid == Obj::ARTIFACT || oid == Obj::MONSTER ||
+				oid == Obj::CREATURE_GENERATOR1 || oid == Obj::CREATURE_GENERATOR4 ||
+				oid == Obj::GARRISON;
+			if (!interesting) continue;
+			if (!server.gh->gs->isVisibleFor(obj, owner)) continue;
+			const int3 p = obj->visitablePos();
+			bool r; int t; reachOf(p, r, t);
+			JsonNode e;
+			e["id"].Integer() = obj->id.getNum();
+			e["type"].Integer() = oid.getNum();
+			e["name"].String() = obj->getObjectName();
+			if (obj->getOwner().isValidPlayer())
+				e["owner"].Integer() = obj->getOwner().getNum();
+			e["x"].Integer() = p.x;
+			e["y"].Integer() = p.y;
+			e["z"].Integer() = p.z;
+			e["reachable"].Bool() = r;
+			if (r) e["turns"].Integer() = t;
+			pois.Vector().push_back(e);
+		}
+
+		// (2) FRONTIERS — explored tiles adjacent to fog, one representative per
+		// bucket (coalesced explore-here nodes), reachable only.
+		const int B = 6;
+		std::map<std::pair<int,int>, int3> bucketRep;
+		std::map<std::pair<int,int>, int> bucketBestDist;
+		for (int z = 0; z < nmap.levels(); z++)
+			for (int x = 0; x < nmap.width; x++)
+				for (int y = 0; y < nmap.height; y++)
+				{
+					const int3 t(x, y, z);
+					if (!server.gh->gs->isVisibleFor(t, owner)) continue;
+					bool isFrontier = false;
+					for (const int3 & d : int3::getDirs())
+					{
+						const int3 c = t + d;
+						if (nmap.isInTheMap(c) && !server.gh->gs->isVisibleFor(c, owner)) { isFrontier = true; break; }
+					}
+					if (!isFrontier) continue;
+					bool r; int tn; reachOf(t, r, tn);
+					if (!r) continue;
+					const int cx = (x / B) * B + B / 2;
+					const int cy = (y / B) * B + B / 2;
+					const auto key = std::make_pair(cx * 1000 + z, cy);
+					const int dist = std::abs(x - cx) + std::abs(y - cy);
+					auto it = bucketBestDist.find(key);
+					if (it == bucketBestDist.end() || dist < it->second)
+					{
+						bucketBestDist[key] = dist;
+						bucketRep[key] = t;
+					}
+				}
+		JsonNode & frontiers = resp["frontiers"];
+		frontiers.Vector();
+		for (const auto & kv : bucketRep)
+		{
+			const int3 t = kv.second;
+			bool r; int tn; reachOf(t, r, tn);
+			JsonNode e;
+			e["x"].Integer() = t.x;
+			e["y"].Integer() = t.y;
+			e["z"].Integer() = t.z;
+			e["reachable"].Bool() = r;
+			if (r) e["turns"].Integer() = tn;
+			frontiers.Vector().push_back(e);
+		}
+
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperSetAutoResolve")
 	{
 		// Toggle full server-side auto-resolve: when on, the server's battle AI
