@@ -490,6 +490,71 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperQueryHero")
+	{
+		// homam-web fork: full hero state — army, primary/secondary skills, mana,
+		// movement, experience/level, spellbook. The pack stream only carries
+		// CHANGES, so a fresh client has no hero detail; this reads it from the
+		// engine (analogous to WrapperQueryTown). Artifacts deferred to a follow-up.
+		const int heroId = static_cast<int>(req["heroId"].Integer());
+		JsonNode resp;
+		resp["type"].String() = "WrapperHero";
+		resp["heroId"].Integer() = heroId;
+		const auto * h = dynamic_cast<const CGHeroInstance *>(map.getObject(ObjectInstanceID(heroId)));
+		if (!h)
+		{
+			resp["error"].String() = "no such hero";
+			sendRawJson(sock, resp);
+			return;
+		}
+		resp["name"].String() = h->getNameTranslated();
+		if (h->getOwner().isValidPlayer())
+			resp["owner"].Integer() = h->getOwner().getNum();
+		resp["class"].Integer() = h->getHeroClassID().getNum();
+		const int3 hp = h->visitablePos();
+		resp["position"]["x"].Integer() = hp.x;
+		resp["position"]["y"].Integer() = hp.y;
+		resp["position"]["z"].Integer() = hp.z;
+		resp["level"].Integer() = h->level;
+		resp["experience"].Integer() = static_cast<int64_t>(h->exp);
+		resp["mana"].Integer() = h->mana;
+		resp["manaLimit"].Integer() = h->manaLimit();
+		resp["movePoints"].Integer() = h->movementPointsRemaining();
+		resp["movePointsLimit"].Integer() = h->movementPointsLimit();
+
+		JsonNode & prim = resp["primary"];
+		prim["attack"].Integer() = h->getPrimSkillLevel(PrimarySkill::ATTACK);
+		prim["defence"].Integer() = h->getPrimSkillLevel(PrimarySkill::DEFENSE);
+		prim["spellPower"].Integer() = h->getPrimSkillLevel(PrimarySkill::SPELL_POWER);
+		prim["knowledge"].Integer() = h->getPrimSkillLevel(PrimarySkill::KNOWLEDGE);
+
+		JsonNode & sec = resp["secondarySkills"];
+		sec.Vector();
+		for (const auto & sk : h->secSkills)
+		{
+			JsonNode e;
+			e["skill"].Integer() = sk.first.getNum();
+			e["level"].Integer() = sk.second;
+			sec.Vector().push_back(e);
+		}
+
+		JsonNode & spellbook = resp["spellbook"];
+		spellbook.Vector();
+		for (const SpellID & sp : h->getSpellsInSpellbook())
+		{
+			JsonNode e;
+			e.Integer() = sp.getNum();
+			spellbook.Vector().push_back(e);
+		}
+
+		JsonNode army;
+		emitCreatureSet(*h, army);
+		resp["army"] = army;
+
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperSetAutoResolve")
 	{
 		// Toggle full server-side auto-resolve: when on, the server's battle AI
