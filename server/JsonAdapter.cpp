@@ -30,6 +30,7 @@
 #include "../lib/mapObjects/CGTownInstance.h"
 #include "../lib/mapObjects/ObjectTemplate.h"
 #include "../lib/entities/faction/CTown.h"
+#include "../lib/entities/building/CBuilding.h"
 #include "../lib/CCreatureHandler.h"
 #include "../lib/spells/CSpellHandler.h"
 #include "../lib/pathfinder/CGPathNode.h"
@@ -483,9 +484,41 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			}
 			guildSpells.Vector().push_back(lvl);
 		}
-		// NOTE: the proposed `buildable` build-state table (EBuildingState
-		// coloring) is intentionally omitted for now — the doc marks it optional
-		// and the client can approximate from `buildings` + costs.
+		// homam-web fork: `buildable` — for every building this town's faction can
+		// have that ISN'T already built, its id + name + cost + build-state
+		// (ALLOWED = buildable now). Ends the build-ID guess-and-check: the client
+		// reads which structure ids to pass to `build`.
+		static const char * buildStateNames[] = {
+			"HAVE_CAPITAL", "NO_WATER", "FORBIDDEN", "ADD_MAGES_GUILD",
+			"ALREADY_PRESENT", "CANT_BUILD_TODAY", "NO_RESOURCES", "ALLOWED",
+			"PREREQUIRES", "MISSING_BASE", "BUILDING_ERROR", "TOWN_NOT_OWNED",
+		};
+		JsonNode & buildable = resp["buildable"];
+		buildable.Vector();
+		for (const auto & bp : town->getTown()->buildings)
+		{
+			const BuildingID bid = bp.first;
+			const EBuildingState st = server.gh->gs->canBuildStructure(town, bid);
+			if (st == EBuildingState::ALREADY_PRESENT)
+				continue; // only report what's NOT built yet
+			JsonNode e;
+			e["id"].Integer() = bid.getNum();
+			e["name"].String() = bp.second ? bp.second->getNameTranslated() : "";
+			const int si = static_cast<int>(st);
+			e["state"].String() = (si >= 0 && si < static_cast<int>(sizeof(buildStateNames)/sizeof(buildStateNames[0])))
+				? buildStateNames[si] : "UNKNOWN";
+			e["allowed"].Bool() = (st == EBuildingState::ALLOWED);
+			const ResourceSet cost = town->getBuildingCost(bid);
+			JsonNode & c = e["cost"];
+			c["gold"].Integer() = cost[GameResID::GOLD];
+			c["wood"].Integer() = cost[GameResID::WOOD];
+			c["ore"].Integer() = cost[GameResID::ORE];
+			c["mercury"].Integer() = cost[GameResID::MERCURY];
+			c["sulfur"].Integer() = cost[GameResID::SULFUR];
+			c["crystal"].Integer() = cost[GameResID::CRYSTAL];
+			c["gems"].Integer() = cost[GameResID::GEMS];
+			buildable.Vector().push_back(e);
+		}
 
 		sendRawJson(sock, resp);
 		return;
