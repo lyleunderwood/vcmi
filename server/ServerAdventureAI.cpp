@@ -24,6 +24,11 @@
 #include "../lib/CPlayerState.h"
 #include "../lib/battle/BattleAction.h"
 #include "../lib/mapObjects/CGHeroInstance.h"
+#include "../lib/mapObjects/CGDwelling.h"
+#include "../lib/mapObjects/CGMarket.h"
+#include "../lib/mapObjects/MiscObjects.h"
+#include "../lib/mapObjects/CGTownInstance.h"
+#include "../lib/mapping/TerrainTile.h"
 
 #include <vcmi/Environment.h>
 
@@ -177,6 +182,130 @@ void ServerAdventureAI::onPackApplied(const CPackForClient & pack)
 		if(hero)
 			if(auto ai = aiFor(hero->getOwner()))
 				ai->heroMoved(*tmh, true);
+		return;
+	}
+
+	// Dialog/window QUERIES the hosted AI must answer to unblock its turn. These
+	// packs are sendAndApply'd AFTER their query is registered (genericQuery /
+	// showTeleportDialog / showGarrisonDialog / showObjectWindow all addQuery
+	// first), so dispatching here mirrors the client's ApplyClientNetPackVisitor
+	// safely. (BlockingDialog/HeroLevelUp/ExchangeDialog register their query
+	// AFTER sendAndApply, so they are routed at their CGameHandler creation site
+	// instead — see showBlockingDialog/levelUpHero/heroExchange.)
+	auto & info = gameHandler->gameInfo();
+
+	if(const auto * td = dynamic_cast<const TeleportDialog *>(&pack))
+	{
+		if(const auto * hero = info.getHero(td->hero))
+			if(auto ai = aiFor(hero->getOwner()))
+				ai->showTeleportDialog(hero, td->channel, td->exits, td->impassable, td->queryID);
+		return;
+	}
+
+	if(const auto * gd = dynamic_cast<const GarrisonDialog *>(&pack))
+	{
+		const auto * hero = info.getHero(gd->hid);
+		const auto * obj = dynamic_cast<const CArmedInstance *>(info.getObj(gd->objid));
+		if(hero && obj)
+			if(auto ai = aiFor(hero->getOwner()))
+				ai->showGarrisonDialog(obj, hero, gd->removableUnits, gd->queryID, gd->customTitle);
+		return;
+	}
+
+	if(const auto * msd = dynamic_cast<const MapObjectSelectDialog *>(&pack))
+	{
+		if(auto ai = aiFor(msd->player))
+			ai->showMapObjectSelectDialog(msd->queryID, msd->icon, msd->title, msd->description, msd->objects);
+		return;
+	}
+
+	if(const auto * ow = dynamic_cast<const OpenWindow *>(&pack))
+	{
+		switch(ow->window)
+		{
+		case EOpenWindowMode::RECRUITMENT_FIRST:
+		case EOpenWindowMode::RECRUITMENT_ALL:
+		{
+			const auto * dw = dynamic_cast<const CGDwelling *>(info.getObj(ow->object));
+			const auto * dst = dynamic_cast<const CArmedInstance *>(info.getObj(ow->visitor));
+			if(dw && dst)
+				if(auto ai = aiFor(dst->tempOwner))
+					ai->showRecruitmentDialog(dw, dst, ow->window == EOpenWindowMode::RECRUITMENT_FIRST ? 0 : -1, ow->queryID);
+			break;
+		}
+		case EOpenWindowMode::SHIPYARD_WINDOW:
+		{
+			if(const auto * sy = dynamic_cast<const IShipyard *>(info.getObj(ow->object)))
+				if(auto ai = aiFor(sy->getObject()->getOwner()))
+					ai->showShipyardDialog(sy);
+			break;
+		}
+		case EOpenWindowMode::THIEVES_GUILD:
+		{
+			const auto * obj = info.getObj(ow->object);
+			const auto * hero = info.getHero(ow->visitor);
+			if(obj && hero)
+				if(auto ai = aiFor(hero->getOwner()))
+					ai->showThievesGuildWindow(obj);
+			break;
+		}
+		case EOpenWindowMode::UNIVERSITY_WINDOW:
+		{
+			const auto * market = dynamic_cast<const IMarket *>(info.getObj(ow->object));
+			const auto * hero = info.getHero(ow->visitor);
+			if(market && hero)
+				if(auto ai = aiFor(hero->tempOwner))
+					ai->showUniversityWindow(market, hero, ow->queryID);
+			break;
+		}
+		case EOpenWindowMode::MARKET_WINDOW:
+		{
+			const auto * obj = info.getObj(ow->object);
+			const auto * market = dynamic_cast<const IMarket *>(obj);
+			const auto * hero = info.getHero(ow->visitor);
+			if(obj && market)
+			{
+				const auto * tile = info.getTile(obj->visitablePos());
+				const auto * top = (tile && !tile->visitableObjects.empty()) ? info.getObjInstance(tile->visitableObjects.back()) : nullptr;
+				if(top)
+					if(auto ai = aiFor(top->getOwner()))
+						ai->showMarketWindow(market, hero, ow->queryID);
+			}
+			break;
+		}
+		case EOpenWindowMode::HILL_FORT_WINDOW:
+		{
+			const auto * obj = info.getObj(ow->object);
+			const auto * hero = info.getHero(ow->visitor);
+			if(obj)
+			{
+				const auto * tile = info.getTile(obj->visitablePos());
+				const auto * top = (tile && !tile->visitableObjects.empty()) ? info.getObjInstance(tile->visitableObjects.back()) : nullptr;
+				if(top)
+					if(auto ai = aiFor(top->getOwner()))
+						ai->showHillFortWindow(obj, hero);
+			}
+			break;
+		}
+		case EOpenWindowMode::PUZZLE_MAP:
+		{
+			if(const auto * hero = info.getHero(ow->visitor))
+				if(auto ai = aiFor(hero->getOwner()))
+					ai->showPuzzleMap();
+			break;
+		}
+		case EOpenWindowMode::TAVERN_WINDOW:
+		{
+			const auto * obj = info.getObj(ow->object);
+			const auto * hero = info.getHero(ow->visitor);
+			if(obj && hero)
+				if(auto ai = aiFor(hero->tempOwner))
+					ai->showTavernWindow(obj, hero, ow->queryID);
+			break;
+		}
+		case EOpenWindowMode::EXCHANGE_WINDOW:
+			break; // routed via CGameHandler::heroExchange (ExchangeDialog)
+		}
 		return;
 	}
 }

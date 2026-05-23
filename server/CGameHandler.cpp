@@ -317,6 +317,11 @@ void CGameHandler::levelUpCommander(const CCommanderInstance * c)
 	{
 		auto commanderLevelUp = std::make_shared<CCommanderLevelUpDialogQuery>(this, clu, hero);
 		queries->addQuery(commanderLevelUp);
+
+		// homam-web fork: deliver the skill-choice callback to a server-hosted AI
+		// (clu is not sendAndApply'd in this branch, so onPackApplied won't see it).
+		if(auto ai = adventureAI->aiFor(hero->getOwner()))
+			ai->commanderGotLevel(c, clu.skills, commanderLevelUp->queryID);
 	}
 }
 
