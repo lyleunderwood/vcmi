@@ -37,7 +37,7 @@ void JsonWriter::writeEntry(JsonMap::const_iterator entry)
 {
 	if(!compactMode)
 	{
-		if(!entry->second.getModScope().empty())
+		if(!suppressComments && !entry->second.getModScope().empty())
 			out << prefix << " // " << entry->second.getModScope() << "\n";
 		out << prefix;
 	}
@@ -50,7 +50,7 @@ void JsonWriter::writeEntry(JsonVector::const_iterator entry)
 {
 	if(!compactMode)
 	{
-		if(!entry->getModScope().empty())
+		if(!suppressComments && !entry->getModScope().empty())
 			out << prefix << " // " << entry->getModScope() << "\n";
 		out << prefix;
 	}
@@ -135,9 +135,10 @@ void JsonWriter::writeNode(const JsonNode & node)
 	compactMode = originalMode;
 }
 
-JsonWriter::JsonWriter(std::ostream & output, bool compact)
+JsonWriter::JsonWriter(std::ostream & output, bool compact, bool suppressComments)
 	: out(output)
 	, compact(compact)
+	, suppressComments(suppressComments)
 {
 }
 

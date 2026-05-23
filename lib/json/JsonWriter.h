@@ -22,6 +22,10 @@ class JsonWriter
 	bool compact;
 	//tracks whether we are currently using single-line format
 	bool compactMode = false;
+	//homam-web fork: when true, never emit `// modScope` comments — keeps output
+	//valid standard JSON even for non-compact nodes (the JSON wire protocol uses
+	//strict JSON.parse, which rejects comments).
+	bool suppressComments = false;
 
 public:
 	template<typename Iterator>
@@ -30,7 +34,7 @@ public:
 	void writeEntry(JsonVector::const_iterator entry);
 	void writeString(const std::string & string);
 	void writeNode(const JsonNode & node);
-	JsonWriter(std::ostream & output, bool compact);
+	JsonWriter(std::ostream & output, bool compact, bool suppressComments = false);
 };
 
 VCMI_LIB_NAMESPACE_END

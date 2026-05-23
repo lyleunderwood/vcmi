@@ -491,7 +491,10 @@ std::vector<std::byte> JsonNode::toBytes() const
 std::string JsonNode::toCompactString() const
 {
 	std::ostringstream out;
-	JsonWriter writer(out, true);
+	// homam-web fork: suppress `// modScope` comments so the result is always
+	// valid standard JSON (compact output is for machines — file writes, the JSON
+	// wire protocol — where comments break strict parsers).
+	JsonWriter writer(out, true, true);
 	writer.writeNode(*this);
 	return out.str();
 }
