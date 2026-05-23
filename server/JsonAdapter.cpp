@@ -1112,6 +1112,28 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 					const int layerMax = static_cast<int>(sizeof(layerNames) / sizeof(layerNames[0]));
 					entry["layer"].String() = (layerIdx >= 0 && layerIdx < layerMax)
 						? layerNames[layerIdx] : "WRONG";
+					// homam-web fork: flag tiles in a (visible) monster's zone of
+					// control — stepping onto one STARTS combat. The pathfinder uses
+					// ignoreGuards=true so it routes THROUGH guards without marking a
+					// BATTLE action; this lets goto stop before a guarded tile rather
+					// than blind-engaging. Gated on visibility (faithful: unseen
+					// guards remain a surprise, as in-game).
+					const auto tileGuards = server.gh->gameInfo().getGuardingCreatures(it->coord);
+					if (!tileGuards.empty())
+					{
+						bool guardVisible = false;
+						uint64_t gstr = 0;
+						for (const auto * g : tileGuards)
+						{
+							if (server.gh->gs->isVisibleFor(g, hero->getOwner())) guardVisible = true;
+							if (const auto * ai = dynamic_cast<const CArmedInstance *>(g)) gstr += ai->getArmyStrength();
+						}
+						if (guardVisible)
+						{
+							entry["guarded"].Bool() = true;
+							entry["guardStrength"].Integer() = static_cast<int64_t>(gstr);
+						}
+					}
 					tiles.Vector().push_back(entry);
 				}
 			}
