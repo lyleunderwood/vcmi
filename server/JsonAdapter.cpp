@@ -23,6 +23,7 @@
 #include "../lib/gameState/CGameState.h"
 #include "../lib/CPlayerState.h"
 #include "../lib/battle/BattleInfo.h"
+#include "../lib/BattleFieldHandler.h"
 #include "../lib/CStack.h"
 #include "../lib/mapping/CMap.h"
 #include "../lib/mapping/TerrainTile.h"
@@ -452,6 +453,22 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		for (const auto & c : LIBRARY->creh->objects)
 			if (c)
 				names[std::to_string(c->getId().getNum())].String() = c->getNameSingularTranslated();
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperCreatureDefs")
+	{
+		// homam-web fork: static {id: combatDefName} table — each creature's BATTLE
+		// animation .DEF base name (e.g. "CPKMN"), parallel to WrapperCreatureNames
+		// and the map `objDef` field (appearance->animationFile.getName()). Lets the
+		// WebGL battle screen pick the right exported sprite per stack. Static — cache.
+		JsonNode resp;
+		resp["type"].String() = "WrapperCreatureDefs";
+		JsonNode & defs = resp["defs"];
+		for (const auto & c : LIBRARY->creh->objects)
+			if (c)
+				defs[std::to_string(c->getId().getNum())].String() = c->animDefName.getName();
 		sendRawJson(sock, resp);
 		return;
 	}
@@ -1168,6 +1185,9 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		JsonNode info;
 		emitBattleInfo(*bi, info);
 		info["activeUnit"].Integer() = bi->activeStack;
+		// homam-web fork: battlefield background image name (for the WebGL battle bg).
+		if (const auto * bfi = bi->battlefieldType.getInfo())
+			info["battlefieldGraphics"].String() = bfi->graphics.getName();
 
 		// homam-web fork: ACTION AFFORDANCES for the active stack so the wrapper can
 		// offer `battle-attack target=<id>` with NO hand-computed from-hex (the #1
