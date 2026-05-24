@@ -35,6 +35,10 @@
 #include "../lib/entities/building/CBuilding.h"
 #include "../lib/CCreatureHandler.h"
 #include "../lib/GameLibrary.h"
+#include "../lib/entities/artifact/CArtHandler.h"
+#include "../lib/entities/artifact/CArtifact.h"
+#include "../lib/entities/artifact/CArtifactInstance.h"
+#include "../lib/entities/artifact/CArtifactSet.h"
 #include "../lib/mapObjects/army/CStackInstance.h"
 #include "../lib/spells/CSpellHandler.h"
 #include "../lib/pathfinder/CGPathNode.h"
@@ -465,6 +469,20 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperArtifactNames")
+	{
+		// homam-web fork: static {id: name} table for ALL artifacts, to label the
+		// artifact ids in WrapperQueryHero.artifacts. Fetch once and cache.
+		JsonNode resp;
+		resp["type"].String() = "WrapperArtifactNames";
+		JsonNode & names = resp["names"];
+		for (const auto & a : LIBRARY->arth->objects)
+			if (a)
+				names[std::to_string(a->getId().getNum())].String() = a->getNameTranslated();
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperQueryHeroSpells")
 	{
 		// Returns a hero's spellbook + mana with engine-authoritative metadata
@@ -749,6 +767,37 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		JsonNode upgrades;
 		emitUpgrades(*server.gh->gs, *h, upgrades);
 		resp["upgrades"] = upgrades;
+
+		// homam-web fork: artifacts — worn (keyed by ArtifactPosition slot) + backpack.
+		// `artifactId` is the artifact TYPE id (label via WrapperArtifactNames). A
+		// `locked` worn slot is a sub-part of an equipped COMBINED artifact (its main
+		// slot holds the same artifactId). Worn slot ids: 0 head,1 shoulders,2 neck,
+		// 3 rHand,4 lHand,5 torso,6 rRing,7 lRing,8 feet,9-12 misc,13-16 machines,
+		// 17 spellbook,18 misc5.
+		JsonNode & arts = resp["artifacts"];
+		JsonNode & worn = arts["worn"];
+		worn.Vector();
+		for (const auto & wp : h->artifactsWorn)
+		{
+			const CArtifactInstance * ai = wp.second.getArt();
+			if (!ai)
+				continue;
+			JsonNode e;
+			e["slot"].Integer() = wp.first.getNum();
+			e["artifactId"].Integer() = ai->getTypeId().getNum();
+			if (wp.second.locked)
+				e["locked"].Bool() = true;
+			worn.Vector().push_back(e);
+		}
+		JsonNode & backpack = arts["backpack"];
+		backpack.Vector();
+		for (const auto & slotInfo : h->artifactsInBackpack)
+		{
+			const CArtifactInstance * ai = slotInfo.getArt();
+			JsonNode e;
+			e.Integer() = ai ? ai->getTypeId().getNum() : -1;
+			backpack.Vector().push_back(e);
+		}
 
 		sendRawJson(sock, resp);
 		return;
