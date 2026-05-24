@@ -28,6 +28,8 @@
 #include "../lib/mapping/TerrainTile.h"
 #include "../lib/mapObjects/CGHeroInstance.h"
 #include "../lib/mapObjects/CGTownInstance.h"
+#include "../lib/mapObjects/IMarket.h"
+#include "../lib/gameState/UpgradeInfo.h"
 #include "../lib/mapObjects/ObjectTemplate.h"
 #include "../lib/entities/faction/CTown.h"
 #include "../lib/entities/building/CBuilding.h"
@@ -60,6 +62,49 @@ static void emitCreatureSet(const CCreatureSet & army, JsonNode & out)
 		e["slot"].Integer() = slot.getNum();
 		e["creatureId"].Integer() = cre ? cre->getId().getNum() : -1;
 		e["count"].Integer() = army.getStackCount(slot);
+		out.Vector().push_back(e);
+	}
+}
+
+// homam-web fork: per-slot creature upgrade options for an army (hero or town).
+// Emits [{slot, to:[creatureIds], cost:[ResourceSet per target]}] for stacks that
+// can upgrade RIGHT NOW (engine fillUpgradeInfo accounts for the town's upgrade
+// dwellings / Hill Fort / visited upgrader). Drives the client's Upgrade button.
+static void emitUpgrades(const CGameState & gs, const CArmedInstance & army, JsonNode & out)
+{
+	out.Vector();
+	for (const auto & slotPair : army.Slots())
+	{
+		const SlotID slot = slotPair.first;
+		const CCreature * cre = army.getCreature(slot);
+		if (!cre)
+			continue;
+		UpgradeInfo info(cre->getId());
+		gs.fillUpgradeInfo(&army, slot, info);
+		if (!info.canUpgrade())
+			continue;
+		JsonNode e;
+		e["slot"].Integer() = slot.getNum();
+		e["from"].Integer() = cre->getId().getNum();
+		const auto & ids = info.getAvailableUpgrades();
+		const auto & costs = info.getAvailableUpgradeCosts();
+		JsonNode & toArr = e["to"];     toArr.Vector();
+		JsonNode & costArr = e["cost"]; costArr.Vector();
+		for (size_t i = 0; i < ids.size(); i++)
+		{
+			JsonNode t; t.Integer() = ids[i].getNum();
+			toArr.Vector().push_back(t);
+			const ResourceSet rs = (i < costs.size()) ? costs[i] : ResourceSet();
+			JsonNode c;
+			c["gold"].Integer() = rs[GameResID::GOLD];
+			c["wood"].Integer() = rs[GameResID::WOOD];
+			c["ore"].Integer() = rs[GameResID::ORE];
+			c["mercury"].Integer() = rs[GameResID::MERCURY];
+			c["sulfur"].Integer() = rs[GameResID::SULFUR];
+			c["crystal"].Integer() = rs[GameResID::CRYSTAL];
+			c["gems"].Integer() = rs[GameResID::GEMS];
+			costArr.Vector().push_back(c);
+		}
 		out.Vector().push_back(e);
 	}
 }
@@ -325,10 +370,12 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		resp["type"].String() = "WrapperHeroes";
 		JsonNode & arr = resp["heroes"];
 		arr.Vector();
-		for (const auto & heroId : server.gh->gs->getMap().getHeroesOnMap())
+		std::set<int> seenHeroes;
+		const auto emitListHero = [&](const CGHeroInstance * h, const char * inTown)
 		{
-			const auto * h = server.gh->gs->getHero(heroId);
-			if (!h) continue;
+			if (!h || seenHeroes.count(h->id.getNum()))
+				return;
+			seenHeroes.insert(h->id.getNum());
 			JsonNode entry;
 			entry["id"].Integer() = h->id.getNum();
 			if (h->getOwner().isValidPlayer())
@@ -337,7 +384,21 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			entry["position"]["y"].Integer() = h->pos.y;
 			entry["position"]["z"].Integer() = h->pos.z;
 			entry["movePoints"].Integer() = h->movementPointsRemaining();
+			if (inTown)
+				entry["inTown"].String() = inTown; // "visiting" or "garrison"
 			arr.Vector().push_back(entry);
+		};
+		for (const auto & heroId : server.gh->gs->getMap().getHeroesOnMap())
+			emitListHero(server.gh->gs->getHero(heroId), nullptr);
+		// homam-web fork: also include heroes sitting IN a town. A freshly-hired
+		// hero becomes the town's VISITING hero and is NOT in getHeroesOnMap(),
+		// so without this it never surfaces (the tavern-hire gap).
+		for (const auto & townId : server.gh->gs->getMap().getAllTowns())
+		{
+			const auto * t = dynamic_cast<const CGTownInstance *>(server.gh->gs->getMap().getObject(townId));
+			if (!t) continue;
+			emitListHero(t->getVisitingHero(), "visiting");
+			emitListHero(t->getGarrisonHero(), "garrison");
 		}
 		sendRawJson(sock, resp);
 		return;
@@ -484,6 +545,12 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		emitCreatureSet(*town, garrison);
 		resp["garrison"] = garrison;
 
+		// homam-web fork: per-slot upgrade options for the town's own garrison
+		// (a garrisoned/visiting hero's upgrades come via WrapperQueryHero).
+		JsonNode garrisonUpgrades;
+		emitUpgrades(*server.gh->gs, *town, garrisonUpgrades);
+		resp["garrisonUpgrades"] = garrisonUpgrades;
+
 		const auto emitTownHero = [&](const CGHeroInstance * h, JsonNode & out)
 		{
 			if (!h)
@@ -552,6 +619,37 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			buildable.Vector().push_back(e);
 		}
 
+		// homam-web fork: marketplace exchange rates — present only when this town
+		// can trade (a Marketplace is built). Rates depend on the number of
+		// marketplaces the owner has, which the engine folds into
+		// getMarketEfficiency(). Each entry: "give `give` units of resource `from`
+		// to receive `get` units of resource `to`" (resource ids 0..6 =
+		// wood,mercury,ore,sulfur,crystal,gems,gold). Drives the trade UI.
+		if (town->allowsTrade(EMarketMode::RESOURCE_RESOURCE))
+		{
+			JsonNode & mr = resp["marketRates"];
+			mr["efficiency"].Integer() = town->getMarketEfficiency();
+			JsonNode & rr = mr["resourceResource"];
+			rr.Vector();
+			for (int from = 0; from < 7; from++)
+			{
+				for (int to = 0; to < 7; to++)
+				{
+					if (from == to)
+						continue;
+					int give = 0, get = 0;
+					if (!town->getOffer(from, to, give, get, EMarketMode::RESOURCE_RESOURCE))
+						continue;
+					JsonNode e;
+					e["from"].Integer() = from;
+					e["to"].Integer() = to;
+					e["give"].Integer() = give;
+					e["get"].Integer() = get;
+					rr.Vector().push_back(e);
+				}
+			}
+		}
+
 		sendRawJson(sock, resp);
 		return;
 	}
@@ -616,6 +714,11 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		JsonNode army;
 		emitCreatureSet(*h, army);
 		resp["army"] = army;
+
+		// homam-web fork: per-slot upgrade options (drives the Upgrade button).
+		JsonNode upgrades;
+		emitUpgrades(*server.gh->gs, *h, upgrades);
+		resp["upgrades"] = upgrades;
 
 		sendRawJson(sock, resp);
 		return;
