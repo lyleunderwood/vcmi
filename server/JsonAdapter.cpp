@@ -916,6 +916,26 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		emitBattleInfo(*bi, info);
 		info["activeUnit"].Integer() = bi->activeStack;
 
+		// homam-web fork: ACTION AFFORDANCES for the active stack so the wrapper can
+		// offer `battle-attack target=<id>` with NO hand-computed from-hex (the #1
+		// manual-combat pain — VCMI's offset-hex adjacency is unintuitive). BattleInfo
+		// is itself a CBattleInfoCallback, so we use the engine's own reachability.
+		// `activeReachable` = hexes the active stack can move to; per-enemy
+		// `attackFromHex` (set in the stacks loop) = a reachable hex adjacent to it.
+		const CStack * activeStk = nullptr;
+		std::set<int> reachSet;
+		for (const auto & sp : bi->stacks)
+			if (sp && static_cast<int32_t>(sp->unitId()) == bi->activeStack) { activeStk = sp.get(); break; }
+		if (activeStk && activeStk->alive())
+		{
+			JsonNode & rj = info["activeReachable"]; rj.Vector();
+			for (const auto & h : bi->battleGetAvailableHexes(activeStk, false))
+			{
+				reachSet.insert(h.toInt());
+				JsonNode e; e.Integer() = h.toInt(); rj.Vector().push_back(e);
+			}
+		}
+
 		// Build a fresh stacks array with live state. NB: JsonNode::Vector() does
 		// NOT clear an already-populated vector (emitBattleInfo filled the
 		// starting-state shape), so build a new node and overwrite the key.
@@ -941,6 +961,27 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			e["movedThisRound"].Bool() = st.moved();
 			e["retaliationsLeft"].Integer() = st.counterAttacks.available();
 			e["isActive"].Bool() = (bi->activeStack == static_cast<int32_t>(st.unitId()));
+			// homam-web fork: for ENEMY stacks (opposite side from the active stack),
+			// surface what the active stack can do to it THIS turn — no hex math needed:
+			//   meleeable     : can the active stack reach an adjacent hex and attack?
+			//   attackFromHex : that hex (feed straight to `battle-attack from=`)
+			//   shootableByActive : active is a shooter with ammo (ranged option)
+			if (activeStk && st.alive() && st.unitSide() != activeStk->unitSide())
+			{
+				int attackFrom = -1;
+				const BattleHex stPos = st.getPosition();
+				const int activePos = activeStk->getPosition().toInt();
+				const auto & nbrs = stPos.getNeighbouringTiles();
+				// already adjacent? attack from current hex (no move).
+				for (const auto & nb : nbrs)
+					if (nb.toInt() == activePos) { attackFrom = activePos; break; }
+				if (attackFrom < 0)
+					for (const auto & nb : nbrs)
+						if (reachSet.count(nb.toInt())) { attackFrom = nb.toInt(); break; }
+				e["meleeable"].Bool() = (attackFrom >= 0);
+				if (attackFrom >= 0) e["attackFromHex"].Integer() = attackFrom;
+				e["shootableByActive"].Bool() = activeStk->canShoot() && activeStk->shots.available() > 0;
+			}
 			stacks.Vector().push_back(e);
 		}
 		info["stacks"] = stacks; // overwrite the starting-state shape
