@@ -343,6 +343,37 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperListTowns")
+	{
+		// homam-web fork: enumerate every town on the map (any owner, incl. neutral).
+		// Mirrors WrapperListHeroes. A thin client can't enumerate towns itself —
+		// town packs only fire on CHANGE, so a fresh client's town list is empty.
+		// This reads the engine's precomputed town index. Drives town discovery,
+		// markers, and the kingdom screen. Shape matches WrapperListHeroes:
+		// position is nested {x,y,z} (the town object's anchor tile, like hero pos).
+		JsonNode resp;
+		resp["type"].String() = "WrapperTowns";
+		JsonNode & arr = resp["towns"];
+		arr.Vector();
+		for (const auto & townId : map.getAllTowns())
+		{
+			const auto * t = dynamic_cast<const CGTownInstance *>(map.getObject(townId));
+			if (!t) continue;
+			JsonNode entry;
+			entry["id"].Integer() = t->id.getNum();
+			if (t->getOwner().isValidPlayer())
+				entry["owner"].Integer() = t->getOwner().getNum();
+			entry["faction"].Integer() = t->getFactionID().getNum();
+			entry["name"].String() = t->getNameTranslated();
+			entry["position"]["x"].Integer() = t->pos.x;
+			entry["position"]["y"].Integer() = t->pos.y;
+			entry["position"]["z"].Integer() = t->pos.z;
+			arr.Vector().push_back(entry);
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperQueryHeroSpells")
 	{
 		// Returns a hero's spellbook + mana with engine-authoritative metadata
