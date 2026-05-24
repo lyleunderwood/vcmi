@@ -716,6 +716,32 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			}
 		}
 
+		// homam-web fork: town-screen render data for the WebGL town view — faction
+		// background image + the screen structures (each with its animation .DEF base
+		// name + screen position). `built` = its `building` is constructed (decorative
+		// structures have building==-1 and are always shown). `hiddenUpgrade` structures
+		// visually mimic their parent. The client renders built structures by `z` then
+		// list order; def names match the offline-exported town sprite lib.
+		JsonNode & render = resp["render"];
+		render["townBg"].String() = town->getTown()->clientInfo.townBackground.getName();
+		JsonNode & structs = render["structures"];
+		structs.Vector();
+		for (const auto & s : town->getTown()->clientInfo.structures)
+		{
+			if (!s)
+				continue;
+			JsonNode e;
+			e["def"].String() = s->defName.getName();
+			e["x"].Integer() = s->pos.x;
+			e["y"].Integer() = s->pos.y;
+			e["z"].Integer() = s->pos.z;
+			e["building"].Integer() = s->building ? s->building->bid.getNum() : -1;
+			e["built"].Bool() = s->building ? town->hasBuilt(s->building->bid) : true;
+			if (s->hiddenUpgrade)
+				e["hiddenUpgrade"].Bool() = true;
+			structs.Vector().push_back(e);
+		}
+
 		sendRawJson(sock, resp);
 		return;
 	}
