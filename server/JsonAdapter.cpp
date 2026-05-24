@@ -34,6 +34,7 @@
 #include "../lib/entities/faction/CTown.h"
 #include "../lib/entities/building/CBuilding.h"
 #include "../lib/CCreatureHandler.h"
+#include "../lib/GameLibrary.h"
 #include "../lib/mapObjects/army/CStackInstance.h"
 #include "../lib/spells/CSpellHandler.h"
 #include "../lib/pathfinder/CGPathNode.h"
@@ -431,6 +432,35 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			entry["position"]["z"].Integer() = t->pos.z;
 			arr.Vector().push_back(entry);
 		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperCreatureNames")
+	{
+		// homam-web fork: static {id: name} table for ALL creatures, so a thin
+		// client can show names for enemy/neutral stacks (and any creature id)
+		// instead of #id. Never changes during a game — fetch once and cache.
+		JsonNode resp;
+		resp["type"].String() = "WrapperCreatureNames";
+		JsonNode & names = resp["names"];
+		for (const auto & c : LIBRARY->creh->objects)
+			if (c)
+				names[std::to_string(c->getId().getNum())].String() = c->getNameSingularTranslated();
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperSpellNames")
+	{
+		// homam-web fork: static {id: name} table for ALL spells (mage guild +
+		// spellbook display). Never changes during a game — fetch once and cache.
+		JsonNode resp;
+		resp["type"].String() = "WrapperSpellNames";
+		JsonNode & names = resp["names"];
+		for (const auto & sp : LIBRARY->spellh->objects)
+			if (sp)
+				names[std::to_string(sp->getId().getNum())].String() = sp->getNameTranslated();
 		sendRawJson(sock, resp);
 		return;
 	}
