@@ -39,6 +39,7 @@
 #include "../lib/entities/artifact/CArtifact.h"
 #include "../lib/entities/artifact/CArtifactInstance.h"
 #include "../lib/entities/artifact/CArtifactSet.h"
+#include "../lib/entities/artifact/ArtifactUtils.h"
 #include "../lib/mapObjects/army/CStackInstance.h"
 #include "../lib/spells/CSpellHandler.h"
 #include "../lib/pathfinder/CGPathNode.h"
@@ -797,6 +798,45 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			JsonNode e;
 			e.Integer() = ai ? ai->getTypeId().getNum() : -1;
 			backpack.Vector().push_back(e);
+		}
+
+		// homam-web fork: combination-artifact assembly state, so the client can offer
+		// Assemble/Disassemble buttons. `assemblable` = combined arts whose components
+		// are ALL currently worn (assembleTo = the combined art id; atSlot = a worn
+		// slot holding one component — pass it as AssembleArtifacts.artifactSlot).
+		// `disassemblable` = worn slots holding an assembled (non-fused) combined art.
+		JsonNode & assemblable = arts["assemblable"];
+		assemblable.Vector();
+		std::set<int> seenCombos;
+		for (const auto & wp : h->artifactsWorn)
+		{
+			const CArtifactInstance * ai = wp.second.getArt();
+			if (!ai || wp.second.locked)
+				continue;
+			for (const CArtifact * combo : ArtifactUtils::assemblyPossibilities(h, ai->getTypeId(), true))
+			{
+				if (!combo || seenCombos.count(combo->getId().getNum()))
+					continue;
+				seenCombos.insert(combo->getId().getNum());
+				JsonNode e;
+				e["assembleTo"].Integer() = combo->getId().getNum();
+				e["atSlot"].Integer() = wp.first.getNum();
+				assemblable.Vector().push_back(e);
+			}
+		}
+		JsonNode & disassemblable = arts["disassemblable"];
+		disassemblable.Vector();
+		for (const auto & wp : h->artifactsWorn)
+		{
+			const CArtifactInstance * ai = wp.second.getArt();
+			if (!ai || wp.second.locked)
+				continue;
+			if (ai->getType() && ai->getType()->hasParts())
+			{
+				JsonNode e;
+				e.Integer() = wp.first.getNum();
+				disassemblable.Vector().push_back(e);
+			}
 		}
 
 		sendRawJson(sock, resp);
