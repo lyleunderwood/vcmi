@@ -1340,6 +1340,9 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			e["count"].Integer() = st.getCount();
 			e["baseCount"].Integer() = static_cast<int64_t>(st.unitBaseAmount());
 			e["firstHPleft"].Integer() = st.getFirstHPleft();
+			// homam-web fork: max HP of ONE creature in the stack (incl. bonuses) —
+			// the client draws the health bar as firstHPleft/maxHealth for the top creature.
+			e["maxHealth"].Integer() = static_cast<int64_t>(st.getMaxHealth());
 			e["position"].Integer() = st.getPosition().toInt();
 			e["alive"].Bool() = st.alive();
 			e["doubleWide"].Bool() = st.doubleWide();
