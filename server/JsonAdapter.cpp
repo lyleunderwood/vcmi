@@ -23,6 +23,7 @@
 #include "../lib/gameState/CGameState.h"
 #include "../lib/CPlayerState.h"
 #include "../lib/battle/BattleInfo.h"
+#include "../lib/battle/Unit.h"
 #include "../lib/BattleFieldHandler.h"
 #include "../lib/CStack.h"
 #include "../lib/mapping/CMap.h"
@@ -1214,6 +1215,40 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		// homam-web fork: battlefield background image name (for the WebGL battle bg).
 		if (const auto * bfi = bi->battlefieldType.getInfo())
 			info["battlefieldGraphics"].String() = bfi->graphics.getName();
+		// homam-web fork: stack turn order (queue strip) — flat list of unitIds in
+		// upcoming-action order across the next 2 rounds, via the engine's own
+		// battleGetTurnOrder (same source as the desktop StackQueue). First = acts next.
+		{
+			std::vector<battle::Units> order;
+			bi->battleGetTurnOrder(order, 1000, 2);
+			JsonNode & to = info["turnOrder"];
+			to.Vector();
+			for (const auto & grp : order)
+				for (const battle::Unit * u : grp)
+					if (u)
+					{
+						JsonNode e;
+						e.Integer() = static_cast<int64_t>(u->unitId());
+						to.Vector().push_back(e);
+					}
+		}
+		// homam-web fork: per-side hero identity (to draw the two heroes on the flanks).
+		// sides[] order is [ATTACKER, DEFENDER] (matches emitBattleInfo's bi.sides order).
+		{
+			auto & sv = info["sides"].Vector();
+			const BattleSide sideOrder[] = { BattleSide::ATTACKER, BattleSide::DEFENDER };
+			for (size_t i = 0; i < sv.size() && i < 2; i++)
+			{
+				const CGHeroInstance * sh = bi->getSideHero(sideOrder[i]);
+				if (!sh)
+					continue;
+				sv[i]["heroName"].String() = sh->getNameTranslated();
+				sv[i]["heroType"].Integer() = sh->getHeroTypeID().getNum();
+				sv[i]["heroPortrait"].Integer() = sh->getIconIndex();
+				sv[i]["heroMana"].Integer() = sh->mana;
+				sv[i]["heroManaLimit"].Integer() = sh->manaLimit();
+			}
+		}
 
 		// homam-web fork: ACTION AFFORDANCES for the active stack so the wrapper can
 		// offer `battle-attack target=<id>` with NO hand-computed from-hex (the #1
