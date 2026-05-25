@@ -26,6 +26,8 @@
 #include "../lib/battle/Unit.h"
 #include "../lib/BattleFieldHandler.h"
 #include "../lib/CStack.h"
+#include "../lib/bonuses/Bonus.h"
+#include "../lib/bonuses/BonusEnum.h"
 #include "../lib/mapping/CMap.h"
 #include "../lib/mapping/TerrainTile.h"
 #include "../lib/mapObjects/CGHeroInstance.h"
@@ -1360,8 +1362,15 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			e["petrified"].Bool() = st.isFrozen(); // STONE_GAZE / petrify (NOT_ACTIVE)
 			// homam-web fork: spellcaster affordance — `canCast` flags creature casters
 			// (Genie/Faerie Dragon/Enchanter) so the client can offer a cast action
-			// without hardcoding creature ids.
+			// without hardcoding creature ids; `spellToCast` is the creature's SPELLCASTER
+			// spell id (the resolved/static spell to pass to MONSTER_SPELL).
 			e["canCast"].Bool() = st.canCast();
+			if (st.canCast())
+			{
+				const auto casterBonuses = st.getBonusesOfType(BonusType::SPELLCASTER);
+				if (casterBonuses && !casterBonuses->empty())
+					e["spellToCast"].Integer() = casterBonuses->front()->subtype.as<SpellID>().getNum();
+			}
 			e["position"].Integer() = st.getPosition().toInt();
 			e["alive"].Bool() = st.alive();
 			e["doubleWide"].Bool() = st.doubleWide();
