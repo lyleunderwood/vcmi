@@ -240,6 +240,30 @@ void JsonAdapter::sendPackToJsonClient(const std::shared_ptr<GameConnection> & g
 
 void JsonAdapter::sendPackToJsonClient(const std::shared_ptr<GameConnection> & game, CPackForClient & pack)
 {
+	// homam-web fork: don't forward an AI-controlled player's dialog/query packs to
+	// the human's JSON connection. In single-player one connection is shared across
+	// all players, so the engine sends AI players' BlockingDialog / TeleportDialog /
+	// GarrisonDialog / HeroLevelUp / MapObjectSelectDialog to the human connection
+	// too — they leak into the client UI and block CLI automation (queries the human
+	// can't and shouldn't answer). The hosted AI answers them server-side
+	// (ServerAdventureAI::onPackApplied + creation-site routing), independent of this
+	// forward, so suppressing them here is safe. The human's OWN dialogs (and all
+	// non-dialog packs) are forwarded unchanged.
+	PlayerColor target = PlayerColor::NEUTRAL;
+	if (const auto * p = dynamic_cast<const BlockingDialog *>(&pack)) target = p->player;
+	else if (const auto * p = dynamic_cast<const HeroLevelUp *>(&pack)) target = p->player;
+	else if (const auto * p = dynamic_cast<const MapObjectSelectDialog *>(&pack)) target = p->player;
+	else if (const auto * p = dynamic_cast<const TeleportDialog *>(&pack)) { if (const auto * h = server.gh->gs->getHero(p->hero)) target = h->getOwner(); }
+	else if (const auto * p = dynamic_cast<const GarrisonDialog *>(&pack)) { if (const auto * h = server.gh->gs->getHero(p->hid)) target = h->getOwner(); }
+	if (target.isValidPlayer())
+	{
+		const auto * ps = server.gh->gameInfo().getPlayerState(target, false);
+		if (ps && !ps->isHuman())
+		{
+			logNetwork->info("[JsonAdapter] suppressing AI player %s dialog pack from human connection", target.toString());
+			return;
+		}
+	}
 	sendPackToJsonClientImpl(game, pack);
 }
 
