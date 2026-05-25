@@ -1832,6 +1832,15 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 							entry["objOwner"].Integer() = obj->getOwner().getNum();
 					}
 				}
+				// homam-web fork: the top BLOCKING object at this tile (ordered like
+				// topVisitableObj — sorted vector, back() is top). topObject only marks
+				// an object's single visitable/entrance tile, so the body of a multi-tile
+				// object (town walls, etc.) and entrance tiles shadowed by a hero have no
+				// topObject. blockingObject lets the client resolve a tap on ANY blocked
+				// tile of an object (e.g. tap any town tile -> open town), matching the
+				// desktop click path. Absent when the tile has no blocking object.
+				if (!tile.blockingObjects.empty())
+					entry["blockingObject"].Integer() = tile.blockingObjects.back().getNum();
 				const int3 guard = map.guardingCreaturePosition(t);
 				if (map.isInTheMap(guard))
 				{
