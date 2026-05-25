@@ -1249,6 +1249,36 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				sv[i]["heroManaLimit"].Integer() = sh->manaLimit();
 			}
 		}
+		// homam-web fork: siege render data — present only when this battle is a town
+		// siege (getDefendedTown() != null). The full wall-PIECE image/position logic
+		// lives in upstream's CLIENT BattleSiegeController (getWallPieceImageName /
+		// getWallPiecePosition over EWallVisual), which isn't in this server-only build
+		// and shouldn't be duplicated across the boundary. So we emit the faction siege
+		// `prefix` (layer-aware, same selection as client getSiegePrefix) + `background`
+		// + `gateState`; the client resolves piece images/positions from
+		// `siegeInfo.wallState` (already sent, per EWallPart) + the static position table.
+		if (const CGTownInstance * dtown = bi->getDefendedTown())
+		{
+			JsonNode & siege = info["siege"];
+			std::string prefix;
+			if (dtown->getTown())
+			{
+				const auto & sp = dtown->getTown()->clientInfo.siegePrefix;
+				const auto & layers = map.mapLayers;
+				if (dtown->pos.z >= 0 && static_cast<size_t>(dtown->pos.z) < layers.size() && sp.count(layers[dtown->pos.z]))
+					prefix = sp.at(layers[dtown->pos.z]);
+				else if (sp.count(MapLayerId::UNKNOWN))
+					prefix = sp.at(MapLayerId::UNKNOWN);
+				else if (sp.count(MapLayerId::SURFACE))
+					prefix = sp.at(MapLayerId::SURFACE);
+				else if (!sp.empty())
+					prefix = sp.begin()->second;
+			}
+			siege["townID"].Integer() = dtown->id.getNum();
+			siege["prefix"].String() = prefix;
+			siege["background"].String() = prefix + "BACK.BMP";
+			siege["gateState"] = info["siegeInfo"]["gateState"]; // mirror of siegeInfo for convenience
+		}
 
 		// homam-web fork: ACTION AFFORDANCES for the active stack so the wrapper can
 		// offer `battle-attack target=<id>` with NO hand-computed from-hex (the #1
