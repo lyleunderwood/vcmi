@@ -1343,6 +1343,25 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			// homam-web fork: max HP of ONE creature in the stack (incl. bonuses) —
 			// the client draws the health bar as firstHPleft/maxHealth for the top creature.
 			e["maxHealth"].Integer() = static_cast<int64_t>(st.getMaxHealth());
+			// homam-web fork: active spell effects + status flags. `activeSpells` = spell
+			// ids currently on this stack (the client maps id -> tint/positivity from its
+			// spell config: petrify=gray, clone=blue, bloodlust=red, and the count-box
+			// positive/negative/neutral variant). `cloned`/`petrified` are the dedicated
+			// render states. Same source the desktop BattleStacksController uses.
+			JsonNode & spellsArr = e["activeSpells"];
+			spellsArr.Vector();
+			for (const SpellID & sid : st.activeSpells())
+			{
+				JsonNode s;
+				s.Integer() = sid.getNum();
+				spellsArr.Vector().push_back(s);
+			}
+			e["cloned"].Bool() = st.isClone();
+			e["petrified"].Bool() = st.isFrozen(); // STONE_GAZE / petrify (NOT_ACTIVE)
+			// homam-web fork: spellcaster affordance — `canCast` flags creature casters
+			// (Genie/Faerie Dragon/Enchanter) so the client can offer a cast action
+			// without hardcoding creature ids.
+			e["canCast"].Bool() = st.canCast();
 			e["position"].Integer() = st.getPosition().toInt();
 			e["alive"].Bool() = st.alive();
 			e["doubleWide"].Bool() = st.doubleWide();
