@@ -174,6 +174,15 @@ void BattleProcessor::resumeLoadedBattle(const BattleID & battleID)
 		return;
 	}
 
+	// homam-web fork: serialization stores each stack as an independent bonus node
+	// (parent links aren't serialized), so loaded stacks inherit no creature
+	// bonuses until re-attached — e.g. the catapult loses its CATAPULT bonus and
+	// firing complains "we do not know how to shoot". Rebuild the bonus tree now,
+	// preserving the restored live unit state. Runs once per battle (the resume
+	// path skips battles that already have a CBattleQuery). The battle lives in
+	// the mutable currentBattles; const here is only from the accessor.
+	const_cast<BattleInfo *>(battle)->reattachAfterLoad();
+
 	const PlayerColor attacker = battle->getSide(BattleSide::ATTACKER).color;
 	const PlayerColor defender = battle->getSide(BattleSide::DEFENDER).color;
 

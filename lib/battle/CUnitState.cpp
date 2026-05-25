@@ -826,6 +826,17 @@ void CUnitState::localInit(const IUnitEnvironment * env_)
 	health.init();
 }
 
+void CUnitState::reattachEnv(const IUnitEnvironment * env_)
+{
+	// homam-web fork: restore the (non-serialized) environment pointer after a
+	// battle is loaded from a save, WITHOUT reset()/health.init() — the live
+	// CUnitState is restored from the save and must be preserved. env is
+	// dereferenced by the caster path (getCasterOwner -> env->unitEffectiveOwner),
+	// so a loaded stack that casts (e.g. the catapult) segfaults without this.
+	env = env_;
+	shots.setEnv(env_);
+}
+
 void CUnitState::reset()
 {
 	cloned = false;

@@ -473,6 +473,12 @@ bool BattleActionProcessor::doCatapultAction(const CBattleInfoCallback & battle,
 	std::shared_ptr<const Bonus> catapultAbility = stack->getFirstBonus(Selector::type()(BonusType::CATAPULT));
 	if(!catapultAbility || catapultAbility->subtype == BonusSubtypeID())
 	{
+		logGlobal->error("[catapult-diag] complain: ba.stackNumber=%d resolved stack unitId=%d creatureId=%d hasCatapultBonus=%d subtypeEmpty=%d",
+			ba.stackNumber,
+			stack ? stack->unitId() : -999,
+			(stack && stack->unitType()) ? stack->unitType()->getId().getNum() : -999,
+			catapultAbility ? 1 : 0,
+			(catapultAbility && catapultAbility->subtype == BonusSubtypeID()) ? 1 : 0);
 		gameHandler->complain("We do not know how to shoot :P");
 	}
 	else

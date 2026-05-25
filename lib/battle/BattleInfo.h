@@ -167,6 +167,10 @@ public:
 	const CGHeroInstance * getHero(const PlayerColor & player) const; //returns fighting hero that belongs to given player
 
 	void localInit();
+	/// homam-web fork: re-attach the bonus tree (army objects + each stack's
+	/// creature/garrison links) after loading a saved battle, preserving the live
+	/// unit state. See CStack::reattachAfterLoad for why serialization drops these.
+	void reattachAfterLoad();
 	static std::unique_ptr<BattleInfo> setupBattle(IGameInfoCallback *cb, const int3 & tile, TerrainId, const BattleField & battlefieldType, BattleSideArray<const CArmedInstance *> armies, BattleSideArray<const CGHeroInstance *> heroes, const BattleLayout & layout, const CGTownInstance * town);
 
 	BattleSide whatSide(const PlayerColor & player) const;

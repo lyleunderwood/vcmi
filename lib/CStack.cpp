@@ -81,6 +81,31 @@ void CStack::localInit(BattleInfo * battleInfo)
 	position = initialPosition;
 }
 
+void CStack::reattachAfterLoad(BattleInfo * battleInfo)
+{
+	// Mirror localInit()'s bonus-tree attachment, but WITHOUT the live-state reset
+	// (no CUnitState::localInit / health.init / position reset) — the mid-battle
+	// CUnitState is restored from the save and must be preserved.
+	battle = battleInfo;
+	assert(typeID.hasValue());
+
+	exportBonuses();
+	if(base) //stack originating from "real" stack in garrison -> attach to it
+	{
+		attachTo(const_cast<CStackInstance&>(*base));
+	}
+	else //attach directly to obj to which stack belongs and creature type
+	{
+		CArmedInstance * army = battle->battleGetArmyObject(side);
+		assert(army);
+		attachTo(*army);
+		attachToSource(*typeID.toCreature());
+	}
+	// Restore the (non-serialized) unit environment so the caster path works
+	// (the catapult's shot is a SPELL_LIKE_ATTACK; getCasterOwner derefs env).
+	CUnitState::reattachEnv(this);
+}
+
 ui32 CStack::level() const
 {
 	if(base)

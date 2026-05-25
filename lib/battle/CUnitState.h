@@ -273,6 +273,9 @@ public:
 	HealInfo heal(int64_t & amount, EHealLevel level, EHealPower power) override;
 
 	void localInit(const IUnitEnvironment * env_);
+	/// homam-web fork: set the environment pointer after loading a saved battle
+	/// without the destructive state reset localInit() performs. See impl.
+	void reattachEnv(const IUnitEnvironment * env_);
 	void serializeJson(JsonSerializeFormat & handler);
 
 	// homam-web fork: binary serialization of the full live battle runtime state

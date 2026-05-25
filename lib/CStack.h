@@ -52,6 +52,15 @@ public:
 	std::string nodeName() const override;
 
 	void localInit(BattleInfo * battleInfo);
+	/// homam-web fork: re-establish the bonus-tree parent links after a battle is
+	/// loaded from a save, WITHOUT resetting live unit state. Serialization stores
+	/// a stack as an independent node (CBonusSystemNode::serialize saves only
+	/// nodeType + exportedBonuses, and CStack::serialize asserts isIndependentNode()),
+	/// so a loaded stack inherits no creature bonuses until re-attached — e.g. the
+	/// catapult loses its CATAPULT bonus ("we do not know how to shoot"). Unlike
+	/// localInit() this does NOT call CUnitState::localInit (reset()/health.init())
+	/// nor reset position, so the restored mid-battle state is preserved.
+	void reattachAfterLoad(BattleInfo * battleInfo);
 	std::string getName() const; //plural or singular
 
 	bool canBeHealed() const; //for first aid tent - only harmed stacks that are not war machines

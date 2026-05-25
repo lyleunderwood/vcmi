@@ -74,6 +74,21 @@ void BattleInfo::localInit()
 	exportBonuses();
 }
 
+void BattleInfo::reattachAfterLoad()
+{
+	for(BattleSide i : { BattleSide::ATTACKER, BattleSide::DEFENDER})
+	{
+		auto * armyObj = battleGetArmyObject(i);
+		armyObj->battle = this;
+		armyObj->attachTo(*this);
+	}
+
+	for(auto & s : stacks)
+		s->reattachAfterLoad(this);
+
+	exportBonuses();
+}
+
 
 //RNG that works like H3 one
 struct RandGen
