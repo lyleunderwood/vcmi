@@ -493,9 +493,22 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		JsonNode resp;
 		resp["type"].String() = "WrapperCreatureDefs";
 		JsonNode & defs = resp["defs"];
+		// homam-web fork: parallel `timing` map — per-creature CRTRAITS animation
+		// durations (seconds) so the client can drive faithful per-group fps
+		// (e.g. MOVING fps = 10*speedFactor/walk). idle may be 0 for some creatures
+		// (client defaults ~10.0). `defs` (id->combat DEF) stays as-is for compat.
+		JsonNode & timing = resp["timing"];
 		for (const auto & c : LIBRARY->creh->objects)
 			if (c)
-				defs[std::to_string(c->getId().getNum())].String() = c->animDefName.getName();
+			{
+				const std::string key = std::to_string(c->getId().getNum());
+				defs[key].String() = c->animDefName.getName();
+				JsonNode & t = timing[key];
+				t["walk"].Float() = c->animation.walkAnimationTime;
+				t["attack"].Float() = c->animation.attackAnimationTime;
+				t["idle"].Float() = c->animation.idleAnimationTime;
+				t["fidget"].Float() = c->animation.timeBetweenFidgets;
+			}
 		sendRawJson(sock, resp);
 		return;
 	}
