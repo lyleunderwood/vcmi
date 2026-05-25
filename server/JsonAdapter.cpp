@@ -28,6 +28,9 @@
 #include "../lib/CStack.h"
 #include "../lib/bonuses/Bonus.h"
 #include "../lib/bonuses/BonusEnum.h"
+#include "../lib/battle/PossiblePlayerBattleAction.h"
+#include <vcmi/spells/Magic.h>
+#include <boost/logic/tribool.hpp>
 #include "../lib/mapping/CMap.h"
 #include "../lib/mapping/TerrainTile.h"
 #include "../lib/mapObjects/CGHeroInstance.h"
@@ -116,6 +119,23 @@ static void emitUpgrades(const CGameState & gs, const CArmedInstance & army, Jso
 			costArr.Vector().push_back(c);
 		}
 		out.Vector().push_back(e);
+	}
+}
+
+// homam-web fork: map a creature-cast PossiblePlayerBattleAction to the web client's
+// castMode strings (for two-step creature casts).
+static const char * castModeName(PossiblePlayerBattleAction::Actions a)
+{
+	switch (a)
+	{
+	case PossiblePlayerBattleAction::AIMED_SPELL_CREATURE: return "aimed";
+	case PossiblePlayerBattleAction::NO_LOCATION:          return "no_location";
+	case PossiblePlayerBattleAction::SACRIFICE:            return "sacrifice";
+	case PossiblePlayerBattleAction::TELEPORT:             return "teleport";
+	case PossiblePlayerBattleAction::OBSTACLE:             return "obstacle";
+	case PossiblePlayerBattleAction::ANY_LOCATION:
+	case PossiblePlayerBattleAction::FREE_LOCATION:        return "any_location";
+	default:                                              return "aimed";
 	}
 }
 
@@ -498,6 +518,10 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		// (e.g. MOVING fps = 10*speedFactor/walk). idle may be 0 for some creatures
 		// (client defaults ~10.0). `defs` (id->combat DEF) stays as-is for compat.
 		JsonNode & timing = resp["timing"];
+		// homam-web fork: `flies` — creature ids with BonusType::FLYING, for the client's
+		// straight-line battle flight (#95).
+		JsonNode & flies = resp["flies"];
+		flies.Vector();
 		for (const auto & c : LIBRARY->creh->objects)
 			if (c)
 			{
@@ -508,6 +532,12 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				t["attack"].Float() = c->animation.attackAnimationTime;
 				t["idle"].Float() = c->animation.idleAnimationTime;
 				t["fidget"].Float() = c->animation.timeBetweenFidgets;
+				if (c->hasBonusOfType(BonusType::FLYING))
+				{
+					JsonNode f;
+					f.Integer() = c->getId().getNum();
+					flies.Vector().push_back(f);
+				}
 			}
 		sendRawJson(sock, resp);
 		return;
@@ -1365,12 +1395,21 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			// render states. Same source the desktop BattleStacksController uses.
 			JsonNode & spellsArr = e["activeSpells"];
 			spellsArr.Vector();
+			int buffSum = 0; // net positivity, mirrors client getStackAmountBox
 			for (const SpellID & sid : st.activeSpells())
 			{
 				JsonNode s;
 				s.Integer() = sid.getNum();
 				spellsArr.Vector().push_back(s);
+				if (const CSpell * sp = sid.toSpell())
+				{
+					const auto pos = sp->getPositiveness();
+					if (!boost::logic::indeterminate(pos))
+						buffSum += (pos ? 1 : -1);
+				}
 			}
+			// homam-web fork: net buff/debuff state for the count-box variant (#88).
+			e["buffState"].String() = buffSum > 0 ? "positive" : (buffSum < 0 ? "negative" : "neutral");
 			e["cloned"].Bool() = st.isClone();
 			e["petrified"].Bool() = st.isFrozen(); // STONE_GAZE / petrify (NOT_ACTIVE)
 			// homam-web fork: spellcaster affordance — `canCast` flags creature casters
@@ -1382,7 +1421,17 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			{
 				const auto casterBonuses = st.getBonusesOfType(BonusType::SPELLCASTER);
 				if (casterBonuses && !casterBonuses->empty())
-					e["spellToCast"].Integer() = casterBonuses->front()->subtype.as<SpellID>().getNum();
+				{
+					const SpellID scid = casterBonuses->front()->subtype.as<SpellID>();
+					e["spellToCast"].Integer() = scid.getNum();
+					// homam-web fork: castMode — the spell's targeting mode for two-step
+					// creature casts (#91), via the engine's own getCasterAction.
+					if (const CSpell * spell = scid.toSpell())
+					{
+						const PossiblePlayerBattleAction act = bi->getCasterAction(spell, &st, spells::Mode::CREATURE_ACTIVE);
+						e["castMode"].String() = castModeName(act.get());
+					}
+				}
 			}
 			e["position"].Integer() = st.getPosition().toInt();
 			e["alive"].Bool() = st.alive();
