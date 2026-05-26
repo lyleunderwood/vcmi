@@ -39,6 +39,8 @@
 #include "../lib/mapObjects/IMarket.h"
 #include "../lib/mapObjects/CGMarket.h"
 #include "../lib/mapObjects/MiscObjects.h"
+#include "../lib/mapObjects/CQuest.h"
+#include "../lib/mapping/CMap.h"
 #include "../lib/gameState/SThievesGuildInfo.h"
 #include "../lib/callback/CGameInfoCallback.h"
 #include "../lib/IGameSettings.h"
@@ -786,6 +788,99 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			if (cIt != thi.bestCreature.end() && cIt->second.hasValue())
 				e["bestCreature"].Integer() = cIt->second.getNum();
 			perPlayer.Vector().push_back(e);
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperPuzzle")
+	{
+		// homam-web fork: obelisk progress + grail hint for the requesting player's
+		// TEAM. Counts are always safe to show; grailPos is the cheat-sensitive bit
+		// — include it ONLY once the team has visited ALL obelisks (full reveal),
+		// so the location is never leaked early. Optional "player" (else 1st human).
+		JsonNode resp;
+		resp["type"].String() = "WrapperPuzzle";
+		PlayerColor player = PlayerColor::CANNOT_DETERMINE;
+		if (req["player"].isNumber())
+			player = PlayerColor(static_cast<int32_t>(req["player"].Integer()));
+		else
+			for (const auto & pp : server.gh->gs->players)
+				if (pp.first.isValidPlayer() && pp.second.isHuman()) { player = pp.first; break; }
+		const auto * ps = server.gh->gs->getPlayerState(player, false);
+		if (!ps)
+		{
+			resp["error"].String() = "no such player";
+			sendRawJson(sock, resp);
+			return;
+		}
+		const int total = map.obeliskCount;
+		int visited = 0;
+		const auto it = map.obelisksVisited.find(ps->team);
+		if (it != map.obelisksVisited.end())
+			visited = it->second;
+		resp["obelisksVisited"].Integer() = visited;
+		resp["obelisksTotal"].Integer() = total;
+		const bool revealed = (total > 0 && visited >= total);
+		resp["grailRevealed"].Bool() = revealed;
+		if (revealed && map.grailPos.isValid())
+		{
+			resp["grailPos"]["x"].Integer() = map.grailPos.x;
+			resp["grailPos"]["y"].Integer() = map.grailPos.y;
+			resp["grailPos"]["z"].Integer() = map.grailPos.z;
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperQuests")
+	{
+		// homam-web fork: the requesting player's quest log — every IQuestObject
+		// (Seer Hut / Quest Guard / Border Guard) the player has DISCOVERED (the
+		// object's tile is visible to them; don't leak unseen quests). `text` is the
+		// engine's quest-log rollover (the requirement in prose). Optional "player"
+		// (else 1st human).
+		JsonNode resp;
+		resp["type"].String() = "WrapperQuests";
+		PlayerColor player = PlayerColor::CANNOT_DETERMINE;
+		if (req["player"].isNumber())
+			player = PlayerColor(static_cast<int32_t>(req["player"].Integer()));
+		else
+			for (const auto & pp : server.gh->gs->players)
+				if (pp.first.isValidPlayer() && pp.second.isHuman()) { player = pp.first; break; }
+		JsonNode & arr = resp["quests"];
+		arr.Vector();
+		for (const auto & objPtr : map.objects)
+		{
+			const CGObjectInstance * obj = objPtr.get();
+			if (!obj)
+				continue;
+			const auto * qo = dynamic_cast<const IQuestObject *>(obj);
+			if (!qo)
+				continue;
+			if (!server.gh->gs->isVisibleFor(obj, player))
+				continue; // discovered = the player has seen this tile
+			const CQuest & q = qo->getQuest();
+			JsonNode e;
+			e["objectId"].Integer() = obj->id.getNum();
+			e["x"].Integer() = obj->pos.x;
+			e["y"].Integer() = obj->pos.y;
+			e["z"].Integer() = obj->pos.z;
+			const char * kind = "QUEST";
+			if (obj->ID == Obj::SEER_HUT)         kind = "SEER_HUT";
+			else if (obj->ID == Obj::QUEST_GUARD) kind = "QUEST_GUARD";
+			else if (obj->ID == Obj::BORDER_GATE) kind = "BORDER_GATE";
+			else if (obj->ID == Obj::BORDERGUARD) kind = "BORDER_GUARD";
+			else if (obj->ID == Obj::KEYMASTER)   kind = "KEYMASTER";
+			e["kind"].String() = kind;
+			e["state"].String() = q.isCompleted ? "COMPLETE"
+				: (q.activeForPlayers.count(player) ? "IN_PROGRESS" : "NOT_ACTIVE");
+			if (q.lastDay >= 0)
+				e["deadline"].Integer() = q.lastDay;
+			MetaString ms;
+			q.getRolloverText(&server.gh->gameInfo(), ms, false);
+			e["text"].String() = ms.toString();
+			arr.Vector().push_back(e);
 		}
 		sendRawJson(sock, resp);
 		return;
