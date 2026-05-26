@@ -1891,8 +1891,18 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		// crashed a live game when an agent did `goto to=-3,1,0`.
 		if (!map.isInTheMap(dest))
 		{
+			// homam-web diag: distinguish a genuinely-OOB request from a corrupted
+			// map (e.g. a binary-incompatible save loaded onto a rebuilt binary,
+			// where width/height/levels deserialize to garbage while a cached
+			// WrapperQueryMap still reports the header dims). Logs the dims the
+			// bounds check actually sees vs the requested dest.
+			logGlobal->error("[path-diag] isInTheMap rejected dest=(%d,%d,%d); map dims=%dx%d levels=%d",
+				dest.x, dest.y, dest.z, map.width, map.height, map.levels());
 			resp["reachable"].Bool() = false;
 			resp["error"].String() = "destination out of map bounds";
+			resp["mapWidth"].Integer() = map.width;
+			resp["mapHeight"].Integer() = map.height;
+			resp["mapLevels"].Integer() = map.levels();
 			sendRawJson(sock, resp);
 			return;
 		}
