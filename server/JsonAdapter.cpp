@@ -158,6 +158,44 @@ uint16_t JsonAdapter::start(uint16_t port)
 	return bound;
 }
 
+// homam-web fork: union of tiles currently within SIGHT of any object owned by a
+// viewer player — the *current sight* footprint (getTilesInRange with no player
+// arg ignores fog and returns the raw geometric range), NOT the sticky-explored
+// fogOfWarMap (isVisibleFor). Used to gate enemy dynamic objects (heroes) out of
+// the JSON stream + snapshots in MP, so a connection only sees enemies it can
+// currently see.
+static void buildCurrentSight(CVCMIServer & server, const std::set<PlayerColor> & viewers, FowTilesType & sight)
+{
+	if (viewers.empty())
+		return;
+	for (const auto & objPtr : server.gh->gs->getMap().objects)
+	{
+		const CGObjectInstance * obj = objPtr.get();
+		if (!obj)
+			continue;
+		const PlayerColor owner = obj->getOwner();
+		if (!owner.isValidPlayer() || viewers.find(owner) == viewers.end())
+			continue;
+		const int radius = obj->getSightRadius();
+		if (radius <= 0)
+			continue;
+		FowTilesType tiles;
+		server.gh->gameInfo().getTilesInRange(tiles, obj->getSightCenter(), radius, ETileVisibility::REVEALED);
+		sight.insert(tiles.begin(), tiles.end());
+	}
+}
+
+// The viewer set for a player's snapshot: its team (shared FoW), else just itself.
+static std::set<PlayerColor> teamViewers(CVCMIServer & server, PlayerColor p)
+{
+	std::set<PlayerColor> v;
+	if (const auto * t = server.gh->gs->getPlayerTeam(p))
+		v = t->players;
+	if (v.empty())
+		v.insert(p);
+	return v;
+}
+
 bool JsonAdapter::ownsConnection(const std::shared_ptr<GameConnection> & game) const
 {
 	for (const auto & pair : jsonConnections)
@@ -294,6 +332,44 @@ void JsonAdapter::sendPackToJsonClient(const std::shared_ptr<GameConnection> & g
 			return;
 		}
 	}
+
+	// homam-web fork: FoW-gate enemy hero movement. Don't leak an enemy hero's
+	// moves through tiles the connection's player(s) can't CURRENTLY see; when an
+	// enemy leaves current sight, tell the client to drop it (WrapperHideObject).
+	// No-ops in single-player / omniscient connections (the connection owns the
+	// moving hero's player, so it's never treated as an enemy).
+	if (const auto * mv = dynamic_cast<const TryMoveHero *>(&pack))
+	{
+		const auto * hero = server.gh->gs->getHero(mv->id);
+		if (hero && hero->getOwner().isValidPlayer())
+		{
+			const auto owned = server.getAllClientPlayers(game->connectionID);
+			const std::set<PlayerColor> viewers(owned.begin(), owned.end());
+			if (viewers.find(hero->getOwner()) == viewers.end()) // an enemy hero
+			{
+				FowTilesType sight;
+				buildCurrentSight(server, viewers, sight);
+				if (sight.find(mv->end) == sight.end()) // destination not in sight
+				{
+					if (sight.find(mv->start) != sight.end()) // just left sight
+					{
+						std::shared_ptr<INetworkConnection> sock;
+						for (const auto & pr : jsonConnections)
+							if (pr.second == game) { sock = pr.first; break; }
+						if (sock)
+						{
+							JsonNode hide;
+							hide["type"].String() = "WrapperHideObject";
+							hide["id"].Integer() = mv->id.getNum();
+							sendRawJson(sock, hide);
+						}
+					}
+					return; // suppress: never reveal an out-of-sight enemy move
+				}
+			}
+		}
+	}
+
 	sendPackToJsonClientImpl(game, pack);
 }
 
@@ -430,6 +506,18 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		// joining player see RED's hero (and vice versa) before turn cycles.
 		JsonNode resp;
 		resp["type"].String() = "WrapperHeroes";
+		// homam-web fork: optional FoW gate. With `forPlayer` set, ENEMY heroes (not
+		// on that player's team) are included only when CURRENTLY in sight — so a
+		// load/reconnect doesn't surface stale out-of-sight enemies. Own/allied
+		// heroes always included; omitting forPlayer keeps the ungated view (CLI).
+		const bool fogGate = req["forPlayer"].isNumber();
+		std::set<PlayerColor> viewers;
+		FowTilesType sight;
+		if (fogGate)
+		{
+			viewers = teamViewers(server, PlayerColor(static_cast<int32_t>(req["forPlayer"].Integer())));
+			buildCurrentSight(server, viewers, sight);
+		}
 		JsonNode & arr = resp["heroes"];
 		arr.Vector();
 		std::set<int> seenHeroes;
@@ -437,6 +525,10 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		{
 			if (!h || seenHeroes.count(h->id.getNum()))
 				return;
+			if (fogGate && h->getOwner().isValidPlayer()
+				&& viewers.find(h->getOwner()) == viewers.end()
+				&& sight.find(h->visitablePos()) == sight.end())
+				return; // enemy hero not currently visible to forPlayer
 			seenHeroes.insert(h->id.getNum());
 			JsonNode entry;
 			entry["id"].Integer() = h->id.getNum();
@@ -2160,11 +2252,44 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		// Full object list (decorations + gameplay), each once, at its anchor (bottom-right) tile.
 		JsonNode resp;
 		resp["type"].String() = "WrapperObjects";
+		// homam-web fork: optional FoW gate. With `forPlayer` set, ENEMY heroes are
+		// included only when CURRENTLY in sight, and other non-owned objects only
+		// when EXPLORED (static objects you remember) — so a load/reconnect doesn't
+		// surface stale out-of-sight enemies. Omitting forPlayer = ungated (CLI).
+		const bool fogGate = req["forPlayer"].isNumber();
+		const PlayerColor viewPlayer = fogGate
+			? PlayerColor(static_cast<int32_t>(req["forPlayer"].Integer()))
+			: PlayerColor::CANNOT_DETERMINE;
+		std::set<PlayerColor> viewers;
+		FowTilesType sight;
+		if (fogGate)
+		{
+			viewers = teamViewers(server, viewPlayer);
+			buildCurrentSight(server, viewers, sight);
+		}
 		JsonNode & arr = resp["objects"];
 		arr.Vector();
 		for (const auto & obj : map.objects)
 		{
 			if (!obj) continue;
+			if (fogGate)
+			{
+				const PlayerColor owner = obj->getOwner();
+				const bool owned = owner.isValidPlayer() && viewers.count(owner) > 0;
+				if (!owned)
+				{
+					if (obj->ID == Obj::HERO || obj->ID == Obj::BOAT)
+					{
+						// mobile: only if currently in sight
+						if (sight.find(obj->visitablePos()) == sight.end())
+							continue;
+					}
+					else if (!server.gh->gs->isVisibleFor(obj.get(), viewPlayer))
+					{
+						continue; // static: only if explored
+					}
+				}
+			}
 			const int3 p = obj->anchorPos();
 			JsonNode e;
 			e["id"].Integer() = obj->id.getNum();
