@@ -37,6 +37,10 @@
 #include "../lib/mapObjects/CGHeroInstance.h"
 #include "../lib/mapObjects/CGTownInstance.h"
 #include "../lib/mapObjects/IMarket.h"
+#include "../lib/mapObjects/CGMarket.h"
+#include "../lib/mapObjects/MiscObjects.h"
+#include "../lib/gameState/SThievesGuildInfo.h"
+#include "../lib/callback/CGameInfoCallback.h"
 #include "../lib/gameState/UpgradeInfo.h"
 #include "../lib/mapObjects/ObjectTemplate.h"
 #include "../lib/entities/faction/CTown.h"
@@ -521,6 +525,264 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				emitCreatureSet(*hero, entry["army"]);
 				arr.Vector().push_back(entry);
 			}
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperPlayers")
+	{
+		// homam-web fork: per-player status + alliance/team — public info the
+		// client needs for endgame (who's INGAME / LOSER / WINNER) and alliances
+		// (allies = same team). NOT derivable from packs after load, and the
+		// kingdom query is per-requesting-player. Deliberately does NOT leak enemy
+		// resources (that would be cheat info) — only the publicly-known fields.
+		JsonNode resp;
+		resp["type"].String() = "WrapperPlayers";
+		JsonNode & arr = resp["players"];
+		arr.Vector();
+		for (const auto & playerPair : server.gh->gs->players)
+		{
+			const PlayerColor color = playerPair.first;
+			if (!color.isValidPlayer())
+				continue;
+			const PlayerState & ps = playerPair.second;
+			JsonNode entry;
+			entry["player"].Integer() = color.getNum();
+			entry["human"].Bool() = ps.isHuman();
+			entry["team"].Integer() = ps.team.getNum();
+			// status: 0=INGAME, 1=LOSER, 2=WINNER (EPlayerStatus); -1=WRONG
+			entry["status"].Integer() = static_cast<int>(server.gh->gameInfo().getPlayerStatus(color, false));
+			arr.Vector().push_back(entry);
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperDwelling")
+	{
+		// homam-web fork: recruitable creatures at a STANDALONE dwelling (Creature
+		// Generator etc.). Town dwellings are covered by WrapperQueryTown; this is
+		// for the showRecruitmentDialog of an external CGDwelling. creatures[level]
+		// = { availableCount, [creatureIds] }, same shape as the town's.
+		const int objId = static_cast<int>(req["objectId"].Integer());
+		JsonNode resp;
+		resp["type"].String() = "WrapperDwelling";
+		resp["objectId"].Integer() = objId;
+		const auto * dw = dynamic_cast<const CGDwelling *>(map.getObject(ObjectInstanceID(objId)));
+		if (!dw)
+		{
+			resp["error"].String() = "no such dwelling";
+			sendRawJson(sock, resp);
+			return;
+		}
+		if (dw->getOwner().isValidPlayer())
+			resp["owner"].Integer() = dw->getOwner().getNum();
+		JsonNode & dwellings = resp["dwellings"];
+		dwellings.Vector();
+		for (size_t level = 0; level < dw->creatures.size(); level++)
+		{
+			const auto & slot = dw->creatures[level];
+			if (slot.second.empty())
+				continue;
+			JsonNode d;
+			d["level"].Integer() = static_cast<int64_t>(level);
+			d["available"].Integer() = slot.first;
+			JsonNode & cres = d["creatures"];
+			cres.Vector();
+			for (const CreatureID & cid : slot.second)
+			{
+				const CCreature * cre = cid.toCreature();
+				if (!cre)
+					continue;
+				JsonNode c;
+				c["id"].Integer() = cid.getNum();
+				c["name"].String() = cre->getNamePluralTranslated();
+				c["goldCost"].Integer() = cre->getRecruitCost(GameResID::GOLD);
+				cres.Vector().push_back(c);
+			}
+			dwellings.Vector().push_back(d);
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperMarket")
+	{
+		// homam-web fork: a market object's allowed trade modes + the (hero-
+		// independent) RESOURCE_RESOURCE rate matrix + efficiency. Covers standalone
+		// Marketplace / Black Market objects and town markets (WrapperQueryTown also
+		// has town RESOURCE_RESOURCE rates). Hero-dependent modes (artifact/creature
+		// trade) depend on the visitor's inventory and are left to the action layer.
+		const int objId = static_cast<int>(req["objectId"].Integer());
+		JsonNode resp;
+		resp["type"].String() = "WrapperMarket";
+		resp["objectId"].Integer() = objId;
+		const auto * mkt = dynamic_cast<const IMarket *>(map.getObject(ObjectInstanceID(objId)));
+		if (!mkt)
+		{
+			resp["error"].String() = "no such market";
+			sendRawJson(sock, resp);
+			return;
+		}
+		resp["efficiency"].Integer() = mkt->getMarketEfficiency();
+		static const char * marketModeNames[] = {
+			"RESOURCE_RESOURCE", "RESOURCE_PLAYER", "CREATURE_RESOURCE", "RESOURCE_ARTIFACT",
+			"ARTIFACT_RESOURCE", "ARTIFACT_EXP", "CREATURE_EXP", "CREATURE_UNDEAD", "RESOURCE_SKILL" };
+		JsonNode & modes = resp["modes"];
+		modes.Vector();
+		for (const EMarketMode m : mkt->availableModes())
+		{
+			const int mi = static_cast<int>(m);
+			if (mi >= 0 && mi < static_cast<int>(sizeof(marketModeNames) / sizeof(marketModeNames[0])))
+			{
+				JsonNode e;
+				e.String() = marketModeNames[mi];
+				modes.Vector().push_back(e);
+			}
+		}
+		if (mkt->allowsTrade(EMarketMode::RESOURCE_RESOURCE))
+		{
+			JsonNode & rr = resp["resourceResource"];
+			rr.Vector();
+			for (int from = 0; from < 7; from++)
+			{
+				for (int to = 0; to < 7; to++)
+				{
+					if (from == to)
+						continue;
+					int give = 0, get = 0;
+					if (!mkt->getOffer(from, to, give, get, EMarketMode::RESOURCE_RESOURCE))
+						continue;
+					JsonNode e;
+					e["from"].Integer() = from;
+					e["to"].Integer() = to;
+					e["give"].Integer() = give;
+					e["get"].Integer() = get;
+					rr.Vector().push_back(e);
+				}
+			}
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperUniversity")
+	{
+		// homam-web fork: the secondary skills a University offers + gold cost.
+		// CGUniversity::skills holds the (randomly chosen) offered skills; cost
+		// comes from getOffer in RESOURCE_SKILL mode (resource -> skill).
+		const int objId = static_cast<int>(req["objectId"].Integer());
+		JsonNode resp;
+		resp["type"].String() = "WrapperUniversity";
+		resp["objectId"].Integer() = objId;
+		const auto * uni = dynamic_cast<const CGUniversity *>(map.getObject(ObjectInstanceID(objId)));
+		if (!uni)
+		{
+			resp["error"].String() = "no such university";
+			sendRawJson(sock, resp);
+			return;
+		}
+		JsonNode & skills = resp["skills"];
+		skills.Vector();
+		for (const auto & item : uni->skills)
+		{
+			const SecondarySkill sk = item.as<SecondarySkill>();
+			JsonNode e;
+			e["skill"].Integer() = sk.getNum();
+			int give = 0, get = 0;
+			if (uni->getOffer(static_cast<int>(GameResID::GOLD), sk.getNum(), give, get, EMarketMode::RESOURCE_SKILL))
+				e["goldCost"].Integer() = give;
+			skills.Vector().push_back(e);
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperHillFort")
+	{
+		// homam-web fork: per-stack creature upgrade options + Hill-Fort pricing
+		// for a visiting hero's army. HillFort has its own fillUpgradeInfo (cheaper
+		// / level-gated upgrades), distinct from the town/standard path emitUpgrades
+		// uses. Needs the hero whose army is being upgraded.
+		const int objId = static_cast<int>(req["objectId"].Integer());
+		const int heroId = static_cast<int>(req["heroId"].Integer());
+		JsonNode resp;
+		resp["type"].String() = "WrapperHillFort";
+		resp["objectId"].Integer() = objId;
+		resp["heroId"].Integer() = heroId;
+		const auto * hf = dynamic_cast<const HillFort *>(map.getObject(ObjectInstanceID(objId)));
+		const auto * hero = server.gh->gs->getHero(ObjectInstanceID(heroId));
+		if (!hf || !hero)
+		{
+			resp["error"].String() = !hf ? "no such hill fort" : "no such hero";
+			sendRawJson(sock, resp);
+			return;
+		}
+		// gs.fillUpgradeInfo (inside emitUpgrades) applies the upgrader at the
+		// hero's CURRENT location — i.e. this hill fort's pricing, since the window
+		// only opens while the hero stands on it. Same shape as WrapperQueryHero's
+		// upgrades, but resolved against the hill fort.
+		emitUpgrades(*server.gh->gs, *hero, resp["upgrades"]);
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperThievesGuild")
+	{
+		// homam-web fork: the Thieves' Guild rankings (getThievesGuildInfo →
+		// SThievesGuildInfo) — per-category ordering of players + each player's
+		// personality and best creature. Computed on demand and never serialized
+		// into a pack. getThievesGuildInfo is CGameInfoCallback-only (not on the
+		// IGameInfoCallback interface), so cast; the obj arg gates detail level by
+		// its owner's tavern count — we pass any town for full computation.
+		JsonNode resp;
+		resp["type"].String() = "WrapperThievesGuild";
+		// NB: CGameInfoCallback::getThievesGuildInfo derives the detail level from
+		// *getPlayerID() (players.at(...)), which throws on the server's omniscient
+		// callback (no player id). Call the underlying computation directly with a
+		// full-detail level (20 = Den-of-Thieves reveal) instead.
+		SThievesGuildInfo thi;
+		server.gh->gs->obtainPlayersStats(thi, 20);
+		// rank tables: each category is [place] -> [player colors tied at that place]
+		const auto emitRanks = [](const std::vector<std::vector<PlayerColor>> & table, JsonNode & out) {
+			out.Vector();
+			for (const auto & place : table)
+			{
+				JsonNode row;
+				row.Vector();
+				for (const PlayerColor & c : place)
+				{
+					JsonNode e;
+					e.Integer() = c.getNum();
+					row.Vector().push_back(e);
+				}
+				out.Vector().push_back(row);
+			}
+		};
+		JsonNode & ranks = resp["ranks"];
+		emitRanks(thi.numOfTowns, ranks["towns"]);
+		emitRanks(thi.numOfHeroes, ranks["heroes"]);
+		emitRanks(thi.gold, ranks["gold"]);
+		emitRanks(thi.woodOre, ranks["woodOre"]);
+		emitRanks(thi.mercSulfCrystGems, ranks["rareResources"]);
+		emitRanks(thi.obelisks, ranks["obelisks"]);
+		emitRanks(thi.artifacts, ranks["artifacts"]);
+		emitRanks(thi.army, ranks["army"]);
+		emitRanks(thi.income, ranks["income"]);
+		JsonNode & perPlayer = resp["players"];
+		perPlayer.Vector();
+		for (const PlayerColor & c : thi.playerColors)
+		{
+			JsonNode e;
+			e["player"].Integer() = c.getNum();
+			const auto pIt = thi.personality.find(c);
+			if (pIt != thi.personality.end())
+				e["personality"].Integer() = static_cast<int>(pIt->second);
+			const auto cIt = thi.bestCreature.find(c);
+			if (cIt != thi.bestCreature.end() && cIt->second.hasValue())
+				e["bestCreature"].Integer() = cIt->second.getNum();
+			perPlayer.Vector().push_back(e);
 		}
 		sendRawJson(sock, resp);
 		return;
