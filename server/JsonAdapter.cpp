@@ -41,6 +41,7 @@
 #include "../lib/mapObjects/MiscObjects.h"
 #include "../lib/gameState/SThievesGuildInfo.h"
 #include "../lib/callback/CGameInfoCallback.h"
+#include "../lib/IGameSettings.h"
 #include "../lib/gameState/UpgradeInfo.h"
 #include "../lib/mapObjects/ObjectTemplate.h"
 #include "../lib/entities/faction/CTown.h"
@@ -683,6 +684,10 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			sendRawJson(sock, resp);
 			return;
 		}
+		// All university skills cost the same flat gold price (the engine reads
+		// MARKETS_UNIVERSITY_GOLD_COST in buySecSkill; getOffer returns 0 here).
+		const int uniCost = server.gh->gameInfo().getSettings().getInteger(EGameSettings::MARKETS_UNIVERSITY_GOLD_COST);
+		resp["goldCost"].Integer() = uniCost;
 		JsonNode & skills = resp["skills"];
 		skills.Vector();
 		for (const auto & item : uni->skills)
@@ -690,9 +695,7 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			const SecondarySkill sk = item.as<SecondarySkill>();
 			JsonNode e;
 			e["skill"].Integer() = sk.getNum();
-			int give = 0, get = 0;
-			if (uni->getOffer(static_cast<int>(GameResID::GOLD), sk.getNum(), give, get, EMarketMode::RESOURCE_SKILL))
-				e["goldCost"].Integer() = give;
+			e["goldCost"].Integer() = uniCost;
 			skills.Vector().push_back(e);
 		}
 		sendRawJson(sock, resp);
