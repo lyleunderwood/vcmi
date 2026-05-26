@@ -109,6 +109,17 @@ std::vector<const CGHeroInstance *> TavernHeroesPool::getHeroesFor(PlayerColor c
 	return result;
 }
 
+std::vector<std::pair<const CGHeroInstance *, TavernHeroSlot>> TavernHeroesPool::getTavernSlotsFor(PlayerColor color) const
+{
+	std::vector<std::pair<const CGHeroInstance *, TavernHeroSlot>> result;
+
+	for(const auto & slot : currentTavern)
+		if (slot.player == color)
+			result.emplace_back(owner->getMap().tryGetFromHeroPool(slot.hero), slot.slot);
+
+	return result;
+}
+
 std::shared_ptr<CGHeroInstance> TavernHeroesPool::takeHeroFromPool(HeroTypeID hero)
 {
 	assert(vstd::contains(heroesPool, hero));

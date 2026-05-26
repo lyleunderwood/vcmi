@@ -21,6 +21,7 @@
 #include "../lib/networkPacks/PacksForServer.h"
 #include "../lib/networkPacks/PacksForClient.h"
 #include "../lib/gameState/CGameState.h"
+#include "../lib/gameState/TavernHeroesPool.h"
 #include "../lib/CPlayerState.h"
 #include "../lib/battle/BattleInfo.h"
 #include "../lib/battle/Unit.h"
@@ -484,6 +485,42 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			entry["position"]["y"].Integer() = t->pos.y;
 			entry["position"]["z"].Integer() = t->pos.z;
 			arr.Vector().push_back(entry);
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperTavern")
+	{
+		// homam-web fork: snapshot of every player's tavern hire pool
+		// (gs->heroesPool). The pool is populated only by SetAvailableHero EVENT
+		// packs (game start / weekly / on change), which are NOT replayed on load,
+		// so a freshly-loaded client's tavern list is empty — same gap as
+		// WrapperListTowns/WrapperListHeroes. Reads the engine's live pool. `slot`
+		// is the TavernHeroSlot (0=NATIVE, 1=RANDOM) matching SetAvailableHero.
+		JsonNode resp;
+		resp["type"].String() = "WrapperTavern";
+		JsonNode & arr = resp["taverns"];
+		arr.Vector();
+		for (const auto & playerPair : server.gh->gs->players)
+		{
+			const PlayerColor color = playerPair.first;
+			if (!color.isValidPlayer())
+				continue;
+			for (const auto & [hero, slot] : server.gh->gs->heroesPool->getTavernSlotsFor(color))
+			{
+				if (!hero)
+					continue;
+				JsonNode entry;
+				entry["player"].Integer() = color.getNum();
+				entry["slot"].Integer() = static_cast<int>(slot);
+				entry["heroId"].Integer() = hero->getHeroTypeID().getNum();
+				entry["name"].String() = hero->getNameTranslated();
+				entry["heroClass"].Integer() = hero->getHeroClassID().getNum();
+				entry["cost"].Integer() = GameConstants::HERO_GOLD_COST;
+				emitCreatureSet(*hero, entry["army"]);
+				arr.Vector().push_back(entry);
+			}
 		}
 		sendRawJson(sock, resp);
 		return;

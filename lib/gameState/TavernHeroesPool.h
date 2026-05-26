@@ -71,6 +71,11 @@ public:
 	/// Returns heroes currently available in tavern of a specific player
 	std::vector<const CGHeroInstance *> getHeroesFor(PlayerColor color) const;
 
+	/// homam-web fork: like getHeroesFor but keeps each hero's tavern slot
+	/// (NATIVE/RANDOM, matching SetAvailableHero::slotID) — the WrapperTavern
+	/// snapshot needs the slot, which getHeroesFor drops.
+	std::vector<std::pair<const CGHeroInstance *, TavernHeroSlot>> getTavernSlotsFor(PlayerColor color) const;
+
 	/// returns heroes in pool without heroes that are available in taverns
 	std::map<HeroTypeID, CGHeroInstance* > unusedHeroesFromPool() const;
 
