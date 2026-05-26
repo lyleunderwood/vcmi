@@ -2485,24 +2485,38 @@ void JsonAdapter::enrichOutbound(const std::shared_ptr<GameConnection> & game, c
 	// as fowRevealedInfo (non-breaking; codec keeps the bare fowRevealed list).
 	if (auto * tmh = dynamic_cast<const TryMoveHero *>(&pack))
 	{
-		if (server.gh && server.gh->gs && !tmh->fowRevealed.empty())
+		if (server.gh && server.gh->gs)
 		{
 			const auto & map = server.gh->gs->getMap();
-			JsonNode & arr = out["fowRevealedInfo"];
-			arr.Vector();
-			for (const int3 & t : tmh->fowRevealed)
+			const auto * mover = server.gh->gs->getHero(tmh->id);
+			// Always tag the mover's owner so the client flags it correctly — a
+			// forwarded enemy move (in-sight) otherwise renders with no/wrong owner.
+			if (mover && mover->getOwner().isValidPlayer())
+				out["heroOwner"].Integer() = mover->getOwner().getNum();
+			// fowRevealed is the MOVER's sight; only attach the revealed-terrain info
+			// when the mover belongs to the connection's player(s) — never leak an
+			// enemy's reveal.
+			const auto owned = server.getAllClientPlayers(game->connectionID);
+			const std::set<PlayerColor> viewers(owned.begin(), owned.end());
+			const bool ownMover = mover && viewers.find(mover->getOwner()) != viewers.end();
+			if (ownMover && !tmh->fowRevealed.empty())
 			{
-				if (!map.isInTheMap(t)) continue;
-				const TerrainTile & tile = map.getTile(t);
-				JsonNode e;
-				e["x"].Integer() = t.x;
-				e["y"].Integer() = t.y;
-				e["z"].Integer() = t.z;
-				e["terrain"].Integer() = tile.getTerrainID().getNum();
-				e["terView"].Integer() = tile.terView;
-				e["extTileFlags"].Integer() = tile.extTileFlags;
-				e["blocked"].Bool() = tile.blocked();
-				arr.Vector().push_back(e);
+				JsonNode & arr = out["fowRevealedInfo"];
+				arr.Vector();
+				for (const int3 & t : tmh->fowRevealed)
+				{
+					if (!map.isInTheMap(t)) continue;
+					const TerrainTile & tile = map.getTile(t);
+					JsonNode e;
+					e["x"].Integer() = t.x;
+					e["y"].Integer() = t.y;
+					e["z"].Integer() = t.z;
+					e["terrain"].Integer() = tile.getTerrainID().getNum();
+					e["terView"].Integer() = tile.terView;
+					e["extTileFlags"].Integer() = tile.extTileFlags;
+					e["blocked"].Bool() = tile.blocked();
+					arr.Vector().push_back(e);
+				}
 			}
 		}
 	}
