@@ -502,6 +502,52 @@ std::vector<int> JsonAdapter::resumeOrphanedBattles(const std::shared_ptr<INetwo
 
 void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> & sock, const std::string & queryType, const JsonNode & req)
 {
+	// Lobby-phase command (runs BEFORE the game handler exists): set the human/AI
+	// roster on the StartInfo before LobbyStartGame, for async multiplayer. Async
+	// means only ONE connection is present at boot, yet several colors must be
+	// human. Per-color control: "self" -> this connection's player id (it controls
+	// that color), "human" -> a placeholder id (human but owned by no live
+	// connection = unmanned; the engine holds at its turn until that player
+	// connects), "ai" -> empty. Every slot is reset to AI first. Because only the
+	// caller's own color is bound to this connection, getAllClientPlayers() returns
+	// exactly that color and the existing FoW gates scope it automatically.
+	if (queryType == "WrapperSetRoster")
+	{
+		std::shared_ptr<GameConnection> game;
+		for (auto & pr : jsonConnections)
+			if (pr.first == sock) { game = pr.second; break; }
+		JsonNode resp;
+		resp["type"].String() = "WrapperSetRoster";
+		if (game && server.si)
+		{
+			const auto myIds = server.getConnectedPlayerIdsForClient(game->connectionID);
+			const PlayerConnectionID myId = myIds.empty() ? PlayerConnectionID::FIRST_HUMAN : myIds.front();
+			for (auto & entry : server.si->playerInfos)
+				entry.second.connectedPlayerIDs.clear();
+			for (const auto & e : req["roster"].Vector())
+			{
+				const PlayerColor color(static_cast<int32_t>(e["color"].Integer()));
+				auto it = server.si->playerInfos.find(color);
+				if (it == server.si->playerInfos.end())
+					continue; // not a playable slot on this map; skip
+				const std::string ctl = e["control"].String();
+				if (ctl == "self")
+					it->second.connectedPlayerIDs.insert(myId);
+				else if (ctl == "human")
+					it->second.connectedPlayerIDs.insert(static_cast<PlayerConnectionID>(100 + color.getNum()));
+				// "ai" -> leave empty
+			}
+			resp["ok"].Bool() = true;
+		}
+		else
+		{
+			resp["ok"].Bool() = false;
+			resp["error"].String() = "no lobby StartInfo / unknown connection";
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (!server.gh || !server.gh->gs)
 	{
 		JsonNode err;
