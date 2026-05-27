@@ -548,6 +548,54 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	// Lobby-phase command: ADDITIVELY claim ONE color for the calling connection.
+	// Unlike WrapperSetRoster (which clears EVERY binding each call — built for the
+	// single-connection async model), this touches only the named color, so N
+	// simultaneous connections can each own their own color without clobbering each
+	// other (live multiplayer). Flow: the host sends WrapperSetRoster once to lay out
+	// human(placeholder)/ai, then each connection sends WrapperClaimColor for its own
+	// color. The binding id is this connection's distinct lobby player id (assigned at
+	// LobbyClientConnected) — NOT getConnectedPlayerIdsForClient, which is empty until a
+	// color is already bound and would collapse every connection onto FIRST_HUMAN.
+	if (queryType == "WrapperClaimColor")
+	{
+		std::shared_ptr<GameConnection> game;
+		for (auto & pr : jsonConnections)
+			if (pr.first == sock) { game = pr.second; break; }
+		JsonNode resp;
+		resp["type"].String() = "WrapperClaimColor";
+		bool ok = false;
+		std::string err;
+		if (!game || !server.si)
+			err = "no lobby StartInfo / unknown connection";
+		else if (!req["color"].isNumber())
+			err = "missing color";
+		else
+		{
+			PlayerConnectionID myId = PlayerConnectionID::FIRST_HUMAN;
+			bool found = false;
+			for (const auto & pn : server.playerNames)
+				if (pn.second.connection == game->connectionID) { myId = pn.first; found = true; break; }
+			const PlayerColor color(static_cast<int32_t>(req["color"].Integer()));
+			auto it = server.si->playerInfos.find(color);
+			if (!found)
+				err = "connection has no lobby player id";
+			else if (it == server.si->playerInfos.end())
+				err = "not a playable slot on this map";
+			else
+			{
+				// Drop the unmanned "human" placeholder for THIS color, then bind me.
+				it->second.connectedPlayerIDs.erase(static_cast<PlayerConnectionID>(100 + color.getNum()));
+				it->second.connectedPlayerIDs.insert(myId);
+				ok = true;
+			}
+		}
+		resp["ok"].Bool() = ok;
+		if (!ok) resp["error"].String() = err;
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (!server.gh || !server.gh->gs)
 	{
 		JsonNode err;
