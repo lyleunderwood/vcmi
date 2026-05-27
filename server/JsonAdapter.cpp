@@ -370,6 +370,33 @@ void JsonAdapter::sendPackToJsonClient(const std::shared_ptr<GameConnection> & g
 		}
 	}
 
+	// homam-web fork: FoW-gate FoWChange. A FoWChange carries the player whose fog
+	// changed; don't forward another player's reveals/hides to this connection
+	// (e.g. an AI hero's sight leaking onto a human's map when they end their
+	// turn). Forward only FoWChange for the connection's HUMAN players + their
+	// teammates (shared sight). Gating on human players — not getAllClientPlayers,
+	// which also returns the AI slots the host nominally controls — matches the
+	// yourPlayers filter and the #114 fowRevealedInfo gate. No-op for a connection
+	// that owns the changed (human) player.
+	if (const auto * fow = dynamic_cast<const FoWChange *>(&pack))
+	{
+		if (fow->player.isValidPlayer() && server.gh && server.gh->gs)
+		{
+			const auto owned = server.getAllClientPlayers(game->connectionID);
+			std::set<PlayerColor> visible;
+			for (const PlayerColor p : owned)
+			{
+				const auto * ps = server.gh->gs->getPlayerState(p, false);
+				if (!ps || !ps->isHuman())
+					continue; // skip AI players the host nominally controls
+				const auto tv = teamViewers(server, p);
+				visible.insert(tv.begin(), tv.end());
+			}
+			if (!visible.empty() && visible.find(fow->player) == visible.end())
+				return; // suppress: another player's FoW change
+		}
+	}
+
 	sendPackToJsonClientImpl(game, pack);
 }
 
