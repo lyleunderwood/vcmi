@@ -2417,6 +2417,32 @@ void JsonAdapter::enrichOutbound(const std::shared_ptr<GameConnection> & game, c
 		}
 	}
 
+	// HeroLevelUp: attach the RESULTING mastery (1=Basic 2=Advanced 3=Expert) for
+	// each offered secondary skill, parallel to `skills`: skillLevels[i] =
+	// min(3, hero->getSecSkillLevel(skills[i]) + 1). The web client can't compute
+	// this itself — while the engine is blocked on this level-up query a
+	// WrapperQueryHero can't be answered, so the hero's current skill levels are
+	// unreachable client-side. The stateless codec has no gs, so enrich here.
+	if (auto * hlu = dynamic_cast<const HeroLevelUp *>(&pack))
+	{
+		if (server.gh && server.gh->gs)
+		{
+			const auto * hero = server.gh->gs->getHero(hlu->heroId);
+			if (hero)
+			{
+				JsonNode & levels = out["skillLevels"];
+				levels.Vector();
+				for (const auto & sk : hlu->skills)
+				{
+					const int resulting = hero->getSecSkillLevel(sk) + 1;
+					JsonNode entry;
+					entry.Integer() = resulting > 3 ? 3 : resulting;
+					levels.Vector().push_back(entry);
+				}
+			}
+		}
+	}
+
 	// LobbyStartGame echo: tell THIS connection which player slots it owns,
 	// plus the current turn state (matters for LOAD_GAME — the engine doesn't
 	// re-broadcast NewTurn/PlayerStartsTurn after load, so without these
