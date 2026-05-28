@@ -943,11 +943,19 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 
 	if (queryType == "WrapperMarket")
 	{
-		// homam-web fork: a market object's allowed trade modes + the (hero-
-		// independent) RESOURCE_RESOURCE rate matrix + efficiency. Covers standalone
-		// Marketplace / Black Market objects and town markets (WrapperQueryTown also
-		// has town RESOURCE_RESOURCE rates). Hero-dependent modes (artifact/creature
-		// trade) depend on the visitor's inventory and are left to the action layer.
+		// homam-web fork: a market object's allowed trade modes + per-mode OFFER
+		// data so the web client can render buy UIs before commit. Covers:
+		//   * RESOURCE_RESOURCE rate matrix (hero-independent) — Marketplace / town
+		//   * RESOURCE_ARTIFACT artifact rotation + cost — Black Market / Artifact
+		//     Merchants (uses IMarket::availableItemsIds, which for towns reads
+		//     gs.map.townMerchantArtifacts and for Black Market its own list).
+		//   * RESOURCE_SKILL — flat MARKETS_UNIVERSITY_GOLD_COST per offered skill
+		//     (engine uses this constant in buySecSkill; getOffer is unused for
+		//     RESOURCE_SKILL). Mirrors WrapperUniversity.
+		//   * CREATURE_UNDEAD — requires a `heroId` request param; enumerates the
+		//     hero's army slots and reports the SKELETON_TRANSFORMER_TARGET (or
+		//     default SKELETON) destination per stack at 1:1. Mirrors
+		//     CGameHandler::transformInUndead.
 		const int objId = static_cast<int>(req["objectId"].Integer());
 		JsonNode resp;
 		resp["type"].String() = "WrapperMarket";
@@ -997,6 +1005,102 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				}
 			}
 		}
+
+		// homam-web fork: RESOURCE_ARTIFACT offers (Artifact Merchants / Black Market).
+		// availableItemsIds returns the current artifact rotation (towns share a
+		// global map.townMerchantArtifacts list refreshed engine-side; Black Market
+		// has its own per-object list refreshed monthly). Cost per artifact is
+		// computed via IMarket::getOffer in RESOURCE_ARTIFACT mode: for each of the
+		// 7 resources, val1 = how many units of that resource buy 1 artifact.
+		if (mkt->allowsTrade(EMarketMode::RESOURCE_ARTIFACT))
+		{
+			JsonNode & ra = resp["resourceArtifact"];
+			ra.Vector();
+			for (const TradeItemBuy & item : mkt->availableItemsIds(EMarketMode::RESOURCE_ARTIFACT))
+			{
+				const ArtifactID aid = item.as<ArtifactID>();
+				JsonNode e;
+				e["aid"].Integer() = aid.getNum();
+				JsonNode & c = e["cost"];
+				static const std::pair<GameResID, const char *> resKeys[] = {
+					{GameResID::WOOD, "wood"},
+					{GameResID::MERCURY, "mercury"},
+					{GameResID::ORE, "ore"},
+					{GameResID::SULFUR, "sulfur"},
+					{GameResID::CRYSTAL, "crystal"},
+					{GameResID::GEMS, "gems"},
+					{GameResID::GOLD, "gold"},
+				};
+				for (const auto & rk : resKeys)
+				{
+					int give = 0, get = 0;
+					if (mkt->getOffer(rk.first.getNum(), aid.getNum(), give, get, EMarketMode::RESOURCE_ARTIFACT))
+						c[rk.second].Integer() = give;
+					else
+						c[rk.second].Integer() = 0;
+				}
+				ra.Vector().push_back(e);
+			}
+		}
+
+		// homam-web fork: RESOURCE_SKILL offers (Magic University). The engine
+		// hardcodes the cost to MARKETS_UNIVERSITY_GOLD_COST in
+		// CGameHandler::buySecSkill; IMarket::getOffer is NOT implemented for
+		// RESOURCE_SKILL (returns false / asserts). So we read the setting directly
+		// (same source as WrapperUniversity above).
+		if (mkt->allowsTrade(EMarketMode::RESOURCE_SKILL))
+		{
+			const int skillCost = server.gh->gameInfo().getSettings().getInteger(EGameSettings::MARKETS_UNIVERSITY_GOLD_COST);
+			JsonNode & rs = resp["resourceSkill"];
+			rs.Vector();
+			for (const TradeItemBuy & item : mkt->availableItemsIds(EMarketMode::RESOURCE_SKILL))
+			{
+				const SecondarySkill sk = item.as<SecondarySkill>();
+				JsonNode e;
+				e["skill"].Integer() = sk.getNum();
+				e["goldCost"].Integer() = skillCost;
+				rs.Vector().push_back(e);
+			}
+		}
+
+		// homam-web fork: CREATURE_UNDEAD offers (Skeleton Transformer). This mode
+		// is hero-dependent: it enumerates the visiting hero's army stacks and
+		// reports each stack's transformation target. The engine rule (see
+		// CGameHandler::transformInUndead): the destination creature is whatever the
+		// stack's SKELETON_TRANSFORMER_TARGET bonus says (Wights/Wraiths → Power
+		// Lich, Dragon-class → Bone Dragon, etc); if no such bonus exists the
+		// default is CreatureID::SKELETON. Ratio is always 1:1 (count preserved).
+		// We only emit when a heroId is supplied AND the hero has stacks.
+		if (mkt->allowsTrade(EMarketMode::CREATURE_UNDEAD) && !req["heroId"].isNull())
+		{
+			const int heroId = static_cast<int>(req["heroId"].Integer());
+			const auto * hero = server.gh->gs->getHero(ObjectInstanceID(heroId));
+			if (hero)
+			{
+				JsonNode & cu = resp["creatureUndead"];
+				cu.Vector();
+				for (const auto & slotPair : hero->Slots())
+				{
+					const SlotID slot = slotPair.first;
+					const CCreature * cre = hero->getCreature(slot);
+					if (!cre)
+						continue;
+					const CStackInstance & st = hero->getStack(slot);
+					CreatureID resCreature = CreatureID::SKELETON;
+					auto customTargetBonus = st.getBonusesOfType(BonusType::SKELETON_TRANSFORMER_TARGET);
+					if (customTargetBonus && !customTargetBonus->empty())
+						resCreature = customTargetBonus->front()->subtype.as<CreatureID>();
+					JsonNode e;
+					e["fromCid"].Integer() = cre->getId().getNum();
+					e["fromSlot"].Integer() = slot.getNum();
+					e["toCid"].Integer() = resCreature.getNum();
+					e["ratio"].String() = "1:1";
+					e["count"].Integer() = hero->getStackCount(slot);
+					cu.Vector().push_back(e);
+				}
+			}
+		}
+
 		sendRawJson(sock, resp);
 		return;
 	}
