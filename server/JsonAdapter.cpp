@@ -20,6 +20,8 @@
 #include "../lib/networkPacks/PacksForLobby.h"
 #include "../lib/networkPacks/PacksForServer.h"
 #include "../lib/networkPacks/PacksForClient.h"
+#include "../lib/networkPacks/PacksForClientBattle.h"
+#include "../lib/networkPacks/SetStackEffect.h"
 #include "../lib/gameState/CGameState.h"
 #include "../lib/gameState/TavernHeroesPool.h"
 #include "../lib/CPlayerState.h"
@@ -145,6 +147,40 @@ static const char * castModeName(PossiblePlayerBattleAction::Actions a)
 	case PossiblePlayerBattleAction::FREE_LOCATION:        return "any_location";
 	default:                                              return "aimed";
 	}
+}
+
+// homam-web fork: extract a battle-tagged pack's BattleID, or BattleID::NONE if
+// `pack` isn't a battle pack. Covers every CPackForClient subclass declared with
+// a `BattleID battleID` member (PacksForClientBattle.h + SetStackEffect.h).
+// BattleResult inherits Query (which inherits CPackForClient), so the
+// dynamic_cast resolves correctly through the chain — Query has no battleID of
+// its own. Kept inline-ish (one branch per type) to make additions obvious when
+// new battle packs land.
+static BattleID battlePackId(const CPack & pack)
+{
+	if (const auto * p = dynamic_cast<const BattleStart *>(&pack))             return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleNextRound *>(&pack))         return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleSetActiveStack *>(&pack))    return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleCancelled *>(&pack))         return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleResultAccepted *>(&pack))    return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleResult *>(&pack))            return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleLogMessage *>(&pack))        return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleStackMoved *>(&pack))        return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleUnitsChanged *>(&pack))      return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleAttack *>(&pack))            return p->battleID;
+	if (const auto * p = dynamic_cast<const StartAction *>(&pack))             return p->battleID;
+	if (const auto * p = dynamic_cast<const EndAction *>(&pack))               return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleSpellCast *>(&pack))         return p->battleID;
+	if (const auto * p = dynamic_cast<const StacksInjured *>(&pack))           return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleResultsApplied *>(&pack))    return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleEnded *>(&pack))             return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleObstaclesChanged *>(&pack))  return p->battleID;
+	if (const auto * p = dynamic_cast<const CatapultAttack *>(&pack))          return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleSetStackProperty *>(&pack))  return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleTriggerEffect *>(&pack))     return p->battleID;
+	if (const auto * p = dynamic_cast<const BattleUpdateGateState *>(&pack))   return p->battleID;
+	if (const auto * p = dynamic_cast<const SetStackEffect *>(&pack))          return p->battleID;
+	return BattleID::NONE;
 }
 
 JsonAdapter::JsonAdapter(CVCMIServer & srv) : server(srv) {}
@@ -394,6 +430,62 @@ void JsonAdapter::sendPackToJsonClient(const std::shared_ptr<GameConnection> & g
 			}
 			if (!visible.empty() && visible.find(fow->player) == visible.end())
 				return; // suppress: another player's FoW change
+		}
+	}
+
+	// homam-web fork: participant-gate battle packs. The engine broadcasts every
+	// Battle* / StartAction / EndAction / StacksInjured / SetStackEffect pack to
+	// EVERY connection's outbound stream, regardless of who's actually in the
+	// battle — and the wrapper's multiplexing proxy faithfully forwards them. So
+	// a connection whose owned colors aren't on either side would otherwise see
+	// BattleStart + BattleSetActiveStack + BattleStackMoved + BattleAttack + ...
+	// for somebody else's fight. That's a real cheat/FoW leak (enemy stack
+	// positions, attack outcomes, the very fact a battle is happening). Gate it
+	// here at the source: if the pack carries a BattleID and the resolved
+	// battle's participants are disjoint from this connection's owned colors,
+	// drop the pack. Same single-point-of-truth pattern as the FoWChange gate
+	// above — no defense-in-depth needed on the client once the broadcast is
+	// trimmed. battlePackId() covers every CPackForClient subclass with a
+	// BattleID battleID member (see helper above for the full list, including
+	// BattleResult which inherits Query → CPackForClient). When the battle can't
+	// be resolved (stale id post-teardown) or has no valid participants
+	// (all-neutral / inconsistent state), we DON'T suppress — letting the pack
+	// through is the safer default vs silently dropping engine state.
+	{
+		const BattleID battleID = battlePackId(pack);
+		if (battleID != BattleID::NONE && server.gh && server.gh->gs)
+		{
+			// Resolve the BattleInfo. Two sources, in order:
+			//   1) BattleStart carries the BattleInfo INLINE (pack.info) — and the
+			//      gs->currentBattles entry isn't installed until this pack's apply
+			//      runs, so getBattle(id) returns null at the moment of broadcast.
+			//      Without this branch, BattleStart leaks to every connection (the
+			//      one pack that reveals "a battle is happening" — exactly the leak
+			//      the gate is meant to plug).
+			//   2) Every other battle pack arrives AFTER the battle is registered;
+			//      look it up in gs.
+			const BattleInfo * bi = nullptr;
+			if (const auto * bs = dynamic_cast<const BattleStart *>(&pack))
+				bi = bs->info.get();
+			if (!bi)
+				bi = server.gh->gs->getBattle(battleID);
+			if (bi)
+			{
+				std::set<PlayerColor> participants;
+				const PlayerColor atk = bi->getSidePlayer(BattleSide::ATTACKER);
+				const PlayerColor def = bi->getSidePlayer(BattleSide::DEFENDER);
+				if (atk.isValidPlayer()) participants.insert(atk);
+				if (def.isValidPlayer()) participants.insert(def);
+				if (!participants.empty())
+				{
+					const auto owned = server.getAllClientPlayers(game->connectionID);
+					bool intersects = false;
+					for (const PlayerColor p : owned)
+						if (participants.find(p) != participants.end()) { intersects = true; break; }
+					if (!intersects)
+						return; // suppress: this connection isn't a participant
+				}
+			}
 		}
 	}
 
