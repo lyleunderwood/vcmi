@@ -631,12 +631,30 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		// on that player's team) are included only when CURRENTLY in sight — so a
 		// load/reconnect doesn't surface stale out-of-sight enemies. Own/allied
 		// heroes always included; omitting forPlayer keeps the ungated view (CLI).
-		const bool fogGate = req["forPlayer"].isNumber();
+		// Multi-color seats (one connection owning N colors) pass `forPlayers: [..]`
+		// instead — viewers = UNION of each color's team; sight = UNION of each color's
+		// current sight. Array wins if both are present (more specific).
+		std::vector<PlayerColor> gatePlayers;
+		if (req["forPlayers"].isVector())
+		{
+			for (const auto & e : req["forPlayers"].Vector())
+				if (e.isNumber())
+					gatePlayers.emplace_back(static_cast<int32_t>(e.Integer()));
+		}
+		else if (req["forPlayer"].isNumber())
+		{
+			gatePlayers.emplace_back(static_cast<int32_t>(req["forPlayer"].Integer()));
+		}
+		const bool fogGate = !gatePlayers.empty();
 		std::set<PlayerColor> viewers;
 		FowTilesType sight;
 		if (fogGate)
 		{
-			viewers = teamViewers(server, PlayerColor(static_cast<int32_t>(req["forPlayer"].Integer())));
+			for (const auto p : gatePlayers)
+			{
+				const auto tv = teamViewers(server, p);
+				viewers.insert(tv.begin(), tv.end());
+			}
 			buildCurrentSight(server, viewers, sight);
 		}
 		JsonNode & arr = resp["heroes"];
@@ -2377,15 +2395,30 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		// included only when CURRENTLY in sight, and other non-owned objects only
 		// when EXPLORED (static objects you remember) — so a load/reconnect doesn't
 		// surface stale out-of-sight enemies. Omitting forPlayer = ungated (CLI).
-		const bool fogGate = req["forPlayer"].isNumber();
-		const PlayerColor viewPlayer = fogGate
-			? PlayerColor(static_cast<int32_t>(req["forPlayer"].Integer()))
-			: PlayerColor::CANNOT_DETERMINE;
+		// Multi-color seats use `forPlayers: [..]` — viewers/sight are the UNION
+		// across colors, and the static-explored check passes if ANY gate-player
+		// has it explored. Array wins if both are present.
+		std::vector<PlayerColor> gatePlayers;
+		if (req["forPlayers"].isVector())
+		{
+			for (const auto & e : req["forPlayers"].Vector())
+				if (e.isNumber())
+					gatePlayers.emplace_back(static_cast<int32_t>(e.Integer()));
+		}
+		else if (req["forPlayer"].isNumber())
+		{
+			gatePlayers.emplace_back(static_cast<int32_t>(req["forPlayer"].Integer()));
+		}
+		const bool fogGate = !gatePlayers.empty();
 		std::set<PlayerColor> viewers;
 		FowTilesType sight;
 		if (fogGate)
 		{
-			viewers = teamViewers(server, viewPlayer);
+			for (const auto p : gatePlayers)
+			{
+				const auto tv = teamViewers(server, p);
+				viewers.insert(tv.begin(), tv.end());
+			}
 			buildCurrentSight(server, viewers, sight);
 		}
 		JsonNode & arr = resp["objects"];
@@ -2401,13 +2434,24 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				{
 					if (obj->ID == Obj::HERO || obj->ID == Obj::BOAT)
 					{
-						// mobile: only if currently in sight
+						// mobile: only if currently in sight (unified across gate players)
 						if (sight.find(obj->visitablePos()) == sight.end())
 							continue;
 					}
-					else if (!server.gh->gs->isVisibleFor(obj.get(), viewPlayer))
+					else
 					{
-						continue; // static: only if explored
+						// static: included if ANY gate player has it explored
+						bool anyExplored = false;
+						for (const auto p : gatePlayers)
+						{
+							if (server.gh->gs->isVisibleFor(obj.get(), p))
+							{
+								anyExplored = true;
+								break;
+							}
+						}
+						if (!anyExplored)
+							continue;
 					}
 				}
 			}
@@ -2437,10 +2481,20 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		// homam-web fork: optional FoW filter. When `fogForPlayer` is set, each
 		// tile is tagged with `visible` (gs->isVisibleFor) so the client can
 		// distinguish explored tiles from omniscient terrain it shouldn't act on.
-		const bool haveFog = req["fogForPlayer"].isNumber();
-		const PlayerColor fogPlayer = haveFog
-			? PlayerColor(static_cast<int32_t>(req["fogForPlayer"].Integer()))
-			: PlayerColor::CANNOT_DETERMINE;
+		// Multi-color seats use `fogForPlayers: [..]` — a tile is `visible:true`
+		// if it's visible to ANY of the listed players (union). Array wins.
+		std::vector<PlayerColor> fogPlayers;
+		if (req["fogForPlayers"].isVector())
+		{
+			for (const auto & e : req["fogForPlayers"].Vector())
+				if (e.isNumber())
+					fogPlayers.emplace_back(static_cast<int32_t>(e.Integer()));
+		}
+		else if (req["fogForPlayer"].isNumber())
+		{
+			fogPlayers.emplace_back(static_cast<int32_t>(req["fogForPlayer"].Integer()));
+		}
+		const bool haveFog = !fogPlayers.empty();
 
 		JsonNode resp;
 		resp["type"].String() = "WrapperMapRegion";
@@ -2471,7 +2525,15 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				entry["blocked"].Bool() = tile.blocked();
 				entry["visitable"].Bool() = tile.visitable();
 				if (haveFog)
-					entry["visible"].Bool() = server.gh->gs->isVisibleFor(t, fogPlayer);
+				{
+					// visible if ANY gate-player has the tile in their FoW (union)
+					bool vis = false;
+					for (const auto p : fogPlayers)
+					{
+						if (server.gh->gs->isVisibleFor(t, p)) { vis = true; break; }
+					}
+					entry["visible"].Bool() = vis;
+				}
 				const auto topObj = tile.topVisitableObj();
 				if (topObj.getNum() >= 0)
 				{
