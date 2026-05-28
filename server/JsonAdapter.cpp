@@ -925,6 +925,14 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				c["id"].Integer() = cid.getNum();
 				c["name"].String() = cre->getNamePluralTranslated();
 				c["goldCost"].Integer() = cre->getRecruitCost(GameResID::GOLD);
+				JsonNode & cc = c["cost"];
+				cc["gold"].Integer() = cre->getRecruitCost(GameResID::GOLD);
+				cc["wood"].Integer() = cre->getRecruitCost(GameResID::WOOD);
+				cc["ore"].Integer() = cre->getRecruitCost(GameResID::ORE);
+				cc["mercury"].Integer() = cre->getRecruitCost(GameResID::MERCURY);
+				cc["sulfur"].Integer() = cre->getRecruitCost(GameResID::SULFUR);
+				cc["crystal"].Integer() = cre->getRecruitCost(GameResID::CRYSTAL);
+				cc["gems"].Integer() = cre->getRecruitCost(GameResID::GEMS);
 				cres.Vector().push_back(c);
 			}
 			dwellings.Vector().push_back(d);
@@ -1382,6 +1390,14 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				c["id"].Integer() = cid.getNum();
 				c["name"].String() = cre->getNamePluralTranslated();
 				c["goldCost"].Integer() = cre->getRecruitCost(GameResID::GOLD);
+				JsonNode & cc = c["cost"];
+				cc["gold"].Integer() = cre->getRecruitCost(GameResID::GOLD);
+				cc["wood"].Integer() = cre->getRecruitCost(GameResID::WOOD);
+				cc["ore"].Integer() = cre->getRecruitCost(GameResID::ORE);
+				cc["mercury"].Integer() = cre->getRecruitCost(GameResID::MERCURY);
+				cc["sulfur"].Integer() = cre->getRecruitCost(GameResID::SULFUR);
+				cc["crystal"].Integer() = cre->getRecruitCost(GameResID::CRYSTAL);
+				cc["gems"].Integer() = cre->getRecruitCost(GameResID::GEMS);
 				cres.Vector().push_back(c);
 			}
 			dwellings.Vector().push_back(d);
