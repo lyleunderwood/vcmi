@@ -35,6 +35,8 @@
 #include <vcmi/spells/Magic.h>
 #include <boost/logic/tribool.hpp>
 #include "../lib/mapping/CMap.h"
+#include "../lib/mapping/CMapHeader.h"
+#include "../lib/mapping/CMapService.h"
 #include "../lib/mapping/TerrainTile.h"
 #include "../lib/mapObjects/CGHeroInstance.h"
 #include "../lib/mapObjects/CGTownInstance.h"
@@ -684,6 +686,76 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		}
 		resp["ok"].Bool() = ok;
 		if (!ok) resp["error"].String() = err;
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	// Pre-game query: read a map's HEADER (no body) and report per-color map-defined
+	// defaults (allowed factions, mainTown faction, custom main hero). The control plane
+	// uses this at deploy time to pre-fill the lobby's per-color faction/hero pickers
+	// instead of leaving them all at "Random". Loads the map via CMapService::loadMapHeader
+	// — cheap, no game state required, so this runs OUTSIDE the gh->gs gate below.
+	// Bonus (artifact/gold/resource) is NOT a map-header field — it's a StartInfo
+	// runtime choice — so bonusDefault is always null here; the control plane treats
+	// null as Random and the host can override per color.
+	if (queryType == "WrapperMapInfo")
+	{
+		JsonNode resp;
+		resp["type"].String() = "WrapperMapInfo";
+		const std::string mapURI = req["mapURI"].String();
+		resp["mapURI"].String() = mapURI;
+		try
+		{
+			CMapService svc;
+			ResourcePath rp(mapURI, EResType::MAP);
+			auto hdr = svc.loadMapHeader(rp);
+			if (!hdr)
+				throw std::runtime_error("loadMapHeader returned null");
+			resp["name"].String() = hdr->name.toString();
+			resp["width"].Integer() = hdr->width;
+			resp["height"].Integer() = hdr->height;
+			JsonNode & arr = resp["players"];
+			arr.Vector();
+			for (size_t color = 0; color < hdr->players.size(); ++color)
+			{
+				const PlayerInfo & pi = hdr->players[color];
+				if (!pi.canAnyonePlay())
+					continue;
+				JsonNode entry;
+				entry["color"].Integer() = static_cast<int64_t>(color);
+				entry["canBeHuman"].Bool() = pi.canHumanPlay;
+				entry["canBeComputer"].Bool() = pi.canComputerPlay;
+				const FactionID fac = pi.defaultCastle();
+				if (fac.isValid())
+					entry["factionDefault"].Integer() = fac.getNum();
+				else
+					entry["factionDefault"].clear(); // null
+				const HeroTypeID hero = pi.defaultHero();
+				if (hero.isValid())
+					entry["heroDefault"].Integer() = hero.getNum();
+				else
+					entry["heroDefault"].clear();
+				entry["bonusDefault"].clear(); // bonus isn't a map-header field
+				JsonNode & af = entry["allowedFactions"];
+				af.Vector();
+				for (const FactionID & f : pi.allowedFactions)
+				{
+					JsonNode n;
+					n.Integer() = f.getNum();
+					af.Vector().push_back(n);
+				}
+				arr.Vector().push_back(entry);
+			}
+		}
+		catch (const std::exception & e)
+		{
+			JsonNode err;
+			err["type"].String() = "WrapperQueryError";
+			err["queryType"].String() = queryType;
+			err["error"].String() = std::string("WrapperMapInfo: ") + e.what();
+			sendRawJson(sock, err);
+			return;
+		}
 		sendRawJson(sock, resp);
 		return;
 	}
