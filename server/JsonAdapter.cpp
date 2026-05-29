@@ -435,6 +435,39 @@ void JsonAdapter::sendPackToJsonClient(const std::shared_ptr<GameConnection> & g
 		}
 	}
 
+	// homam-web fork: per-color gate for PlayerStartsTurn. The engine broadcasts
+	// PlayerStartsTurn to every connection regardless of who's about to act,
+	// leaking another HUMAN's turn cadence (when they're acting, on what
+	// schedule, how long they take) to their opponent. Same membership-gate
+	// pattern as FoWChange above, with the same human-only filter:
+	// getAllClientPlayers also returns the AI slots the host nominally controls
+	// — those broadcasts are useful for UI ("AI is thinking…") and aren't a
+	// privacy concern, so let them through. Suppress only when the starting
+	// player is a HUMAN that this connection does NOT control. PRESERVE the
+	// post-load rebroadcast at the LobbyStartGame echo (~line 2915 below) —
+	// that path builds its own yourPlayers payload from owned colors only.
+	// Discovered via bind-rebind-lifecycle-smoke.
+	if (const auto * pst = dynamic_cast<const PlayerStartsTurn *>(&pack))
+	{
+		if (pst->player.isValidPlayer() && server.gh && server.gh->gs)
+		{
+			const auto * startPs = server.gh->gs->getPlayerState(pst->player, false);
+			if (startPs && startPs->isHuman())
+			{
+				const auto owned = server.getAllClientPlayers(game->connectionID);
+				bool ownsStartingPlayer = false;
+				for (const PlayerColor p : owned)
+				{
+					if (p != pst->player) continue;
+					const auto * ps = server.gh->gs->getPlayerState(p, false);
+					if (ps && ps->isHuman()) { ownsStartingPlayer = true; break; }
+				}
+				if (!ownsStartingPlayer)
+					return; // suppress: another human's turn start
+			}
+		}
+	}
+
 	// homam-web fork: participant-gate battle packs. The engine broadcasts every
 	// Battle* / StartAction / EndAction / StacksInjured / SetStackEffect pack to
 	// EVERY connection's outbound stream, regardless of who's actually in the
