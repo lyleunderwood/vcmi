@@ -2553,6 +2553,71 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperQueryPendingBattles")
+	{
+		// homam-web fork (Refs #301): list the PvP battles the engine has deferred
+		// to the defender's next turn (PendingBattle vector in CGameState). The
+		// wrapper reads this to drive per-lobby combat policy — sync-attach window
+		// + optional auto-resolve-on-timeout — without needing a new pack type.
+		JsonNode resp;
+		resp["type"].String() = "WrapperPendingBattles";
+		JsonNode & arr = resp["pending"];
+		arr.Vector();
+		if (server.gh && server.gh->gs)
+		{
+			for (const auto & pb : server.gh->gs->pendingBattles)
+			{
+				JsonNode entry;
+				entry["defender"].Integer() = pb.defender.getNum();
+				entry["army1"].Integer() = pb.army1.getNum();
+				entry["army2"].Integer() = pb.army2.getNum();
+				entry["hero1"].Integer() = pb.hero1.hasValue() ? pb.hero1.getNum() : -1;
+				entry["hero2"].Integer() = pb.hero2.hasValue() ? pb.hero2.getNum() : -1;
+				entry["town"].Integer()  = pb.town.hasValue()  ? pb.town.getNum()  : -1;
+				JsonNode & tile = entry["tile"];
+				tile["x"].Integer() = pb.tile.x;
+				tile["y"].Integer() = pb.tile.y;
+				tile["z"].Integer() = pb.tile.z;
+				// Attacker color is the army1's owner — convenient for the wrapper
+				// without it having to dereference army1.
+				const auto * a1 = server.gh->gameInfo().getObj(pb.army1, false);
+				const auto * armed = dynamic_cast<const CArmedInstance *>(a1);
+				entry["attacker"].Integer() = armed ? armed->getOwner().getNum() : -1;
+				arr.Vector().push_back(entry);
+			}
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperResolvePendingBattles")
+	{
+		// homam-web fork (Refs #301): wrapper-triggered resolution of every battle
+		// deferred for `defender`. Routes through CGameHandler::resolveDeferredBattlesFor
+		// — the SAME entry point the engine uses at the defender's natural turn
+		// start, so capture-on-victory / hero death / post-battle effects all flow
+		// through the standard MapObjectVisitQuery bracket. When the defender has
+		// no client attached, ServerBattleAI plays their side (combat-policy
+		// auto-resolve-on-timeout). Safe to call when there are no pending battles
+		// for that color (no-op).
+		const int colorInt = static_cast<int>(req["defender"].Integer());
+		PlayerColor defender(colorInt);
+		size_t before = 0;
+		if (server.gh && server.gh->gs)
+		{
+			for (const auto & pb : server.gh->gs->pendingBattles)
+				if (pb.defender == defender) ++before;
+			if (before > 0)
+				server.gh->resolveDeferredBattlesFor(defender);
+		}
+		JsonNode resp;
+		resp["type"].String() = "WrapperResolvePendingBattlesResult";
+		resp["defender"].Integer() = colorInt;
+		resp["resolved"].Integer() = static_cast<int64_t>(before);
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperPopQuery")
 	{
 		// Hard escape: forcibly remove a query from the QueriesProcessor.

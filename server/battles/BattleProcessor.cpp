@@ -101,17 +101,19 @@ void BattleProcessor::restartBattle(const BattleID & battleID, const CArmedInsta
 void BattleProcessor::startBattle(const CArmedInstance *army1, const CArmedInstance *army2, int3 tile,
 								const CGHeroInstance *hero1, const CGHeroInstance *hero2, const BattleLayout & layout, const CGTownInstance *town)
 {
-	// homam-web fork: defer a battle a hosted AI initiates against a human who is
+	// homam-web fork: defer a battle initiated against a human defender who is
 	// not currently acting (their turn already passed). VCMI battles are
 	// synchronous within the attacker's turn; for async play we re-initiate this
 	// at the start of the human defender's next turn so they play the defense.
-	// Scoped to AI-attacker-vs-offline-human only (human PvP is left untouched).
+	// Covers BOTH AI-attacker-vs-offline-human (Phase 4) and human-PvP-async
+	// (Refs #301): any time the defender isn't at the keyboard, the battle is
+	// parked as a PendingBattle and replayed when the defender next acts.
+	// The wrapper layers per-lobby combat-policy (sync-attach window + optional
+	// auto-resolve-on-timeout) on top of this primitive — see #301 / docs/async-multiplayer.md.
 	{
-		const PlayerColor attacker = army1->getOwner();
 		const PlayerColor defender = army2->getOwner();
 		const auto * defState = gameHandler->gameInfo().getPlayerState(defender, false);
 		if(defState && defState->isHuman()
-			&& gameHandler->adventureAI->isDriven(attacker)
 			&& !gameHandler->turnOrder->isPlayerMakingTurn(defender))
 		{
 			gameHandler->deferBattle(army1, army2, tile, hero1, hero2, town);
