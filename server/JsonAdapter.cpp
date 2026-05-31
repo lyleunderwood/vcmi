@@ -54,6 +54,8 @@
 #include "../lib/entities/building/CBuilding.h"
 #include "../lib/CCreatureHandler.h"
 #include "../lib/GameLibrary.h"
+#include "../lib/rmg/CRmgTemplate.h"
+#include "../lib/rmg/CRmgTemplateStorage.h"
 #include "../lib/entities/artifact/CArtHandler.h"
 #include "../lib/entities/artifact/CArtifact.h"
 #include "../lib/entities/artifact/CArtifactInstance.h"
@@ -788,6 +790,53 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			err["error"].String() = std::string("WrapperMapInfo: ") + e.what();
 			sendRawJson(sock, err);
 			return;
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperListRmgTemplates")
+	{
+		// homam-web fork: enumerate RMG templates loaded by LIBRARY->tplh
+		// (CRmgTemplateStorage). Drives the lobby's random-map dropdown +
+		// client-side validation of template constraints. Read-only — does
+		// not depend on a game being started, so this lives ABOVE the gh->gs
+		// gate (same as WrapperMapInfo). Cached wrapper-side keyed by
+		// engineBuildId (see rmg_template_cache).
+		JsonNode resp;
+		resp["type"].String() = "WrapperRmgTemplates";
+		JsonNode & arr = resp["templates"];
+		arr.Vector();
+		const auto templates = LIBRARY->tplh->getTemplates();
+		for (const auto * t : templates)
+		{
+			if (!t) continue;
+			JsonNode entry;
+			entry["id"].String() = t->getId();
+			entry["name"].String() = t->getName();
+			const auto sizes = t->getMapSizes();
+			JsonNode & minS = entry["minSize"];
+			minS["width"].Integer() = sizes.first.x;
+			minS["height"].Integer() = sizes.first.y;
+			minS["levels"].Integer() = sizes.first.z;
+			JsonNode & maxS = entry["maxSize"];
+			maxS["width"].Integer() = sizes.second.x;
+			maxS["height"].Integer() = sizes.second.y;
+			maxS["levels"].Integer() = sizes.second.z;
+			entry["minPlayers"].Integer() = t->getPlayers().minValue();
+			entry["maxPlayers"].Integer() = t->getPlayers().maxValue();
+			entry["minHumanPlayers"].Integer() = t->getHumanPlayers().minValue();
+			entry["maxHumanPlayers"].Integer() = t->getHumanPlayers().maxValue();
+			// hasWater: any non-NONE water content allowed (afterLoad normalizes
+			// RANDOM into {NONE, NORMAL, ISLANDS}, so RANDOM never appears here).
+			const auto & water = t->getWaterContentAllowed();
+			bool hasWater = false;
+			for (const auto wc : water)
+				if (wc != EWaterContent::NONE) { hasWater = true; break; }
+			entry["hasWater"].Bool() = hasWater;
+			// hasUnderground: allowed size range covers level 2+.
+			entry["hasUnderground"].Bool() = sizes.second.z > 1;
+			arr.Vector().push_back(entry);
 		}
 		sendRawJson(sock, resp);
 		return;
