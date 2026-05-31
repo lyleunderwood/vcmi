@@ -2564,10 +2564,41 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			server.gh->gs->calculatePaths(config);
 
 			CGPath path;
-			const bool reachable = pathsInfo.getPath(path, dest);
+			bool reachable = pathsInfo.getPath(path, dest);
 			logNetwork->info("[Pathfinder] hero=%d at (%d,%d,%d) -> (%d,%d,%d): reachable=%d, nodes=%d",
 				heroId, hero->pos.x, hero->pos.y, hero->pos.z, dx, dy, dz,
 				reachable ? 1 : 0, (int)path.nodes.size());
+			// homam-web fork (KB-6): the pathfinder false-negatives some directly-
+			// adjacent tiles — notably the hero's own pos-space tile (a hero's
+			// footprint occupies visitablePos and pos = visitablePos+(1,0), so
+			// stepping east one tile lands on what BFS treats as currently-occupied).
+			// MoveHero accepts these single-step moves; mirror that here so callers
+			// can rely on WrapperQueryPath instead of fast-pathing around it.
+			bool adjacencyOverride = false;
+			if (!reachable)
+			{
+				const int3 heroVis = hero->visitablePos();
+				const int dxAbs = std::abs(dest.x - heroVis.x);
+				const int dyAbs = std::abs(dest.y - heroVis.y);
+				const bool adjacent = dest.z == heroVis.z
+					&& dxAbs <= 1 && dyAbs <= 1 && (dxAbs + dyAbs) > 0;
+				if (adjacent && server.gh->gs->isVisibleFor(dest, hero->getOwner()))
+				{
+					const TerrainTile & destTile = map.getTile(dest);
+					// The canonical KB-6 case: dest == hero->pos (hero footprint
+					// occupies visitablePos ∪ pos = visitablePos+(1,0)). The tile
+					// reports blocked() because the hero stands on it; treat it as
+					// steppable regardless. Otherwise require a non-wall tile or a
+					// visitable entrance. MoveHero does the authoritative validation;
+					// we err toward "ask" not "refuse".
+					const bool ownFootprint = (dest == hero->pos);
+					if (ownFootprint || !destTile.blocked() || destTile.visitable())
+					{
+						reachable = true;
+						adjacencyOverride = true;
+					}
+				}
+			}
 			resp["reachable"].Bool() = reachable;
 			if (!reachable)
 			{
@@ -2611,7 +2642,53 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 					br["distanceToTarget"].Integer() = bestDist;
 				}
 			}
-			if (reachable && !path.nodes.empty())
+			if (reachable && adjacencyOverride)
+			{
+				// Synthesized single-step path for the KB-6 fallback above.
+				// cost/turns/movePointsAfter are unknown without a real path node;
+				// MoveHero will recompute on dispatch. Surface enough for goto-style
+				// callers to walk one tile.
+				resp["adjacencyOverride"].Bool() = true;
+				resp["turnsToReach"].Integer() = 0;
+				const int3 movePos = hero->convertFromVisitablePos(dest);
+				const TerrainTile & destTile = map.getTile(dest);
+				JsonNode & tiles = resp["tiles"];
+				tiles.Vector();
+				JsonNode entry;
+				entry["x"].Integer() = movePos.x;
+				entry["y"].Integer() = movePos.y;
+				entry["z"].Integer() = movePos.z;
+				entry["visitablePos"]["x"].Integer() = dest.x;
+				entry["visitablePos"]["y"].Integer() = dest.y;
+				entry["visitablePos"]["z"].Integer() = dest.z;
+				entry["turn"].Integer() = 0;
+				entry["action"].String() = destTile.visitable() ? "VISIT" : "NORMAL";
+				entry["layer"].String() = "LAND";
+				const auto tileGuards = server.gh->gameInfo().getGuardingCreatures(dest);
+				if (!tileGuards.empty())
+				{
+					bool guardVisible = false;
+					JsonNode guardArmy; guardArmy.Vector();
+					for (const auto * g : tileGuards)
+					{
+						if (!server.gh->gs->isVisibleFor(g, hero->getOwner())) continue;
+						guardVisible = true;
+						if (const auto * ai = dynamic_cast<const CArmedInstance *>(g))
+							for (const auto & slot : ai->Slots())
+							{
+								const auto & st = slot.second;
+								if (!st || !st->getCreature()) continue;
+								JsonNode b;
+								b["creature"].String() = st->getCreature()->getNamePluralTranslated();
+								b["count"].String() = CCreature::getQuantityRangeStringForId(st->getQuantityID());
+								guardArmy.Vector().push_back(b);
+							}
+					}
+					if (guardVisible) { entry["guarded"].Bool() = true; entry["guardArmy"] = guardArmy; }
+				}
+				tiles.Vector().push_back(entry);
+			}
+			else if (reachable && !path.nodes.empty())
 			{
 				// path.nodes is in reverse (dest -> start); front() is destination.
 				const auto & destNode = path.nodes.front();
