@@ -821,6 +821,28 @@ void CMapGenOptions::CPlayerSettings::setTeam(const TeamID & value)
 	team = value;
 }
 
+bool CMapGenOptions::hasCustomSeed() const
+{
+	return customSeedSet;
+}
+
+int CMapGenOptions::getCustomSeed() const
+{
+	return customSeed;
+}
+
+void CMapGenOptions::setCustomSeed(int seed)
+{
+	customSeedSet = true;
+	customSeed = seed;
+}
+
+void CMapGenOptions::clearCustomSeed()
+{
+	customSeedSet = false;
+	customSeed = 0;
+}
+
 void CMapGenOptions::serializeJson(JsonSerializeFormat & handler)
 {
 	handler.serializeInt("width", width);
@@ -853,6 +875,13 @@ void CMapGenOptions::serializeJson(JsonSerializeFormat & handler)
 	}
 
 	handler.serializeIdArray("roads", enabledRoads);
+
+	// homam-web fork: optional persisted seed for reproducible RMG (issue #122).
+	// Two-field encoding (presence flag + value) so seed=0 is a valid override.
+	// On load with neither field present, both default to false/0 → no override.
+	handler.serializeBool("hasCustomSeed", customSeedSet);
+	handler.serializeInt("customSeed", customSeed);
+
 	if (!handler.saving)
 	{
 		// Player settings won't be saved

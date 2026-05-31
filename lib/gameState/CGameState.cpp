@@ -65,6 +65,7 @@
 #include "../pathfinder/CPathfinder.h"
 #include "../pathfinder/PathfinderOptions.h"
 #include "../rmg/CMapGenerator.h"
+#include "../rmg/CMapGenOptions.h"
 #include "../serializer/CMemorySerializer.h"
 #include "../serializer/CLoadFile.h"
 #include "../serializer/CSaveFile.h"
@@ -334,8 +335,15 @@ void CGameState::initNewGame(const IMapService * mapService, vstd::RNG & randomG
 		logGlobal->info("Create random map.");
 		CStopWatch sw;
 
-		// Gen map
-		CMapGenerator mapGenerator(*scenarioOps->mapGenOptions, this, randomGenerator.nextInt());
+		// Gen map.
+		// homam-web fork (issue #122): honor a persisted custom seed when the
+		// wrapper supplied one via CMapGenOptions::serializeJson — this is what
+		// makes the lobby's seed picker actually produce reproducible maps.
+		// Otherwise draw from the game RNG (upstream behavior).
+		const int rmgSeed = scenarioOps->mapGenOptions->hasCustomSeed()
+			? scenarioOps->mapGenOptions->getCustomSeed()
+			: randomGenerator.nextInt();
+		CMapGenerator mapGenerator(*scenarioOps->mapGenOptions, this, rmgSeed);
 		progressTracking.include(mapGenerator);
 
 		map = mapGenerator.generate();

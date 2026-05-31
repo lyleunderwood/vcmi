@@ -26,10 +26,12 @@
  * mapGenOpts presence flag — the wrapper already has the full RMG selection
  * in Postgres, so a wire echo of the blob is not needed today).
  *
- * Seed reproducibility: the engine's CMapGenOptions::serializeJson does NOT
- * carry a seed (initNewGame draws one from the game RNG). Honoring a
- * persisted #111 rmgSeed for reproducible-within-build maps is open work and
- * NOT addressed here.
+ * Seed reproducibility (#122): the fork adds two optional fields to
+ * CMapGenOptions::serializeJson — {hasCustomSeed:bool, customSeed:int} — and
+ * the fork-edited CGameState::initNewGame uses customSeed for the CMapGenerator
+ * RNG when hasCustomSeed is true. The wrapper sends these fields when the
+ * persisted #111 rmgSeed is non-null, so the lobby's #114 seed picker produces
+ * reproducible maps (within a single engine build).
  */
 #include "StdInc.h"
 

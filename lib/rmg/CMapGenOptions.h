@@ -157,6 +157,14 @@ public:
 
 	static const si8 RANDOM_SIZE = -1;
 
+	/// homam-web fork: optional persisted seed for reproducible RMG. When set,
+	/// CGameState::initNewGame uses this seed for the CMapGenerator's RNG instead
+	/// of drawing one from the game RNG. Default: no override.
+	bool hasCustomSeed() const;
+	int getCustomSeed() const;
+	void setCustomSeed(int seed);
+	void clearCustomSeed();
+
 private:
 	void initPlayersMap();
 	void resetPlayersMap();
@@ -181,7 +189,11 @@ private:
 	std::map<PlayerColor, CPlayerSettings> savedPlayerSettings;
 	std::set<RoadId> enabledRoads;
 	bool customizedPlayers;
-	
+
+	/// homam-web fork: see hasCustomSeed/getCustomSeed/setCustomSeed above.
+	bool customSeedSet = false;
+	int customSeed = 0;
+
 	const CRmgTemplate * mapTemplate;
 
 public:
