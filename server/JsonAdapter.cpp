@@ -56,6 +56,9 @@
 #include "../lib/GameLibrary.h"
 #include "../lib/rmg/CRmgTemplate.h"
 #include "../lib/rmg/CRmgTemplateStorage.h"
+#include "../lib/modding/CModHandler.h"
+#include "../lib/modding/ModDescription.h"
+#include "../lib/modding/CModVersion.h"
 #include "../lib/entities/artifact/CArtHandler.h"
 #include "../lib/entities/artifact/CArtifact.h"
 #include "../lib/entities/artifact/CArtifactInstance.h"
@@ -836,6 +839,66 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			entry["hasWater"].Bool() = hasWater;
 			// hasUnderground: allowed size range covers level 2+.
 			entry["hasUnderground"].Bool() = sizes.second.z > 1;
+			arr.Vector().push_back(entry);
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
+	if (queryType == "WrapperListMods")
+	{
+		// homam-web fork: enumerate mods active in the engine's current preset.
+		// Drives the per-game mod_set contract — createGame pins the active set,
+		// resume compares persisted vs current. Read-only and pre-game-state, so
+		// this lives ABOVE the gh->gs gate (same as WrapperMapInfo / Rmg).
+		// See #290 (Tier 1 mod support).
+		JsonNode resp;
+		resp["type"].String() = "WrapperMods";
+		JsonNode & arr = resp["mods"];
+		arr.Vector();
+		const auto & active = LIBRARY->modh->getActiveMods();
+		for (const auto & modId : active)
+		{
+			JsonNode entry;
+			entry["id"].String() = modId;
+			try
+			{
+				const auto & info = LIBRARY->modh->getModInfo(modId);
+				entry["version"].String() = info.getVersion().toString();
+				entry["name"].String() = info.getName();
+				entry["modType"].String() = info.getValue("modType").String();
+				const JsonNode & compat = info.getLocalValue("compatibility");
+				JsonNode & compatOut = entry["compatibility"];
+				if (!compat.isNull())
+				{
+					if (compat["min"].isString())
+						compatOut["min"].String() = compat["min"].String();
+					if (compat["max"].isString())
+						compatOut["max"].String() = compat["max"].String();
+				}
+				JsonNode & deps = entry["depends"];
+				deps.Vector();
+				for (const auto & d : info.getDependencies())
+				{
+					JsonNode n;
+					n.String() = d;
+					deps.Vector().push_back(n);
+				}
+				JsonNode & conf = entry["conflicts"];
+				conf.Vector();
+				for (const auto & c : info.getConflicts())
+				{
+					JsonNode n;
+					n.String() = c;
+					conf.Vector().push_back(n);
+				}
+			}
+			catch (const std::exception &)
+			{
+				// Mod active but description unavailable — emit id-only entry,
+				// the wrapper compares by (id, version) and absent version
+				// trips a clean drift signal rather than crashing the query.
+			}
 			arr.Vector().push_back(entry);
 		}
 		sendRawJson(sock, resp);
