@@ -1894,6 +1894,7 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		if (h->getOwner().isValidPlayer())
 			resp["owner"].Integer() = h->getOwner().getNum();
 		resp["class"].Integer() = h->getHeroClassID().getNum();
+		resp["heroType"].Integer() = h->getHeroTypeID().getNum();
 		const int3 hp = h->visitablePos();
 		resp["position"]["x"].Integer() = hp.x;
 		resp["position"]["y"].Integer() = hp.y;
@@ -2071,6 +2072,7 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 			JsonNode e;
 			e["id"].Integer() = hh->id.getNum();
 			e["name"].String() = hh->getNameTranslated();
+			e["heroType"].Integer() = hh->getHeroTypeID().getNum();
 			e["level"].Integer() = hh->level;
 			e["position"]["x"].Integer() = hh->visitablePos().x;
 			e["position"]["y"].Integer() = hh->visitablePos().y;
