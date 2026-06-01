@@ -24,6 +24,12 @@
 
 void CBattleQuery::notifyObjectAboutRemoval(const CGObjectInstance * visitedObject, const CGHeroInstance * visitingHero) const
 {
+	// homam-web fork (#302): aborted = rollback path. The battle was cancelled
+	// without a result; nothing to apply to the visited object. The visit query
+	// above us still pops itself cleanly via its own popIfTop.
+	if(aborted)
+		return;
+
 	assert(result);
 
 	if(result)
@@ -74,6 +80,13 @@ bool CBattleQuery::blocksPack(const CPackForServer * pack) const
 
 void CBattleQuery::onRemoval(PlayerColor color)
 {
+	// homam-web fork (#302): aborted path — battle was cancelled by
+	// WrapperRollbackLiveBattle. Skip battleFinalize (no casualties / exp /
+	// artifacts to apply); the rollback caller already erased BattleInfo from
+	// gs->currentBattles and re-queued a PendingBattle.
+	if(aborted)
+		return;
+
 	assert(result);
 
 	if(result)

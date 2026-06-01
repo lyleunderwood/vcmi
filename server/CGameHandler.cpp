@@ -24,6 +24,7 @@
 #include "queries/QueriesProcessor.h"
 #include "queries/MapQueries.h"
 #include "queries/VisitQueries.h"
+#include "queries/BattleQueries.h"
 
 #include "../lib/CConfigHandler.h"
 #include "../lib/CCreatureHandler.h"
@@ -4564,6 +4565,87 @@ void CGameHandler::resolveDeferredBattlesFor(PlayerColor defender)
 		// plays the hosted-AI attacker's stacks while the human plays the defense.
 		objectVisited(target, attacker);
 	}
+}
+
+int CGameHandler::rollbackLiveBattleForDefender(PlayerColor defender)
+{
+	// Find a live battle in which `defender` is the DEFENDER side. (Attacker-side
+	// rollback isn't supported: the attacker initiated the engagement and the
+	// defender is the one who lost their browser — re-queuing as a PendingBattle
+	// only makes sense for the defender's seat.)
+	if(!gs)
+		return -1;
+	BattleInfo * battle = nullptr;
+	for(auto & b : gs->currentBattles)
+	{
+		if(!b) continue;
+		if(b->getSidePlayer(BattleSide::DEFENDER) == defender)
+		{
+			battle = b.get();
+			break;
+		}
+	}
+	if(!battle)
+		return -1;
+
+	const BattleID battleID = battle->battleID;
+	const PlayerColor attackerPlayer = battle->getSidePlayer(BattleSide::ATTACKER);
+
+	// Snapshot the engagement before we tear anything down — these pointers are
+	// safe to read here (startBattle only mutated BattleInfo + CBattleQuery; the
+	// underlying CArmedInstance / CGHeroInstance / CGTownInstance map objects
+	// haven't been touched yet — casualties / artifacts only apply at endBattle).
+	const CArmedInstance * army1 = battle->getSideArmy(BattleSide::ATTACKER);
+	const CArmedInstance * army2 = battle->getSideArmy(BattleSide::DEFENDER);
+	const CGHeroInstance * hero1 = battle->battleGetFightingHero(BattleSide::ATTACKER);
+	const CGHeroInstance * hero2 = battle->battleGetFightingHero(BattleSide::DEFENDER);
+	const int3 tile = battle->tile;
+	const CGTownInstance * town = nullptr;
+	if(battle->townID.hasValue())
+		town = dynamic_cast<const CGTownInstance *>(gameInfo().getObj(battle->townID, false));
+
+	if(!army1 || !army2)
+	{
+		logGlobal->warn("[rollbackLiveBattle] battle %d missing belligerent army; skipping", battleID.getNum());
+		return -1;
+	}
+
+	// Pop the CBattleQuery from BOTH players' query stacks. We flag it aborted
+	// first so onRemoval skips battleFinalize and the visit query's onExposure
+	// notify becomes a no-op (visit query then pops itself cleanly — see
+	// MapObjectVisitQuery::onExposure + CBattleQuery::notifyObjectAboutRemoval).
+	auto bq = std::dynamic_pointer_cast<CBattleQuery>(queries->topQuery(attackerPlayer));
+	if(!bq || bq->battleID != battleID)
+		bq = std::dynamic_pointer_cast<CBattleQuery>(queries->topQuery(defender));
+	if(bq && bq->battleID == battleID)
+	{
+		bq->aborted = true;
+		queries->popIfTop(bq);
+	}
+	else
+	{
+		logGlobal->warn("[rollbackLiveBattle] no CBattleQuery atop either player's stack for battle %d — popping by erase only", battleID.getNum());
+	}
+
+	// Remove the battle from currentBattles. The unique_ptr destructor detaches
+	// BattleInfo's bonus node and frees stacks — no map-side rewards applied.
+	for(auto it = gs->currentBattles.begin(); it != gs->currentBattles.end(); ++it)
+	{
+		if(*it && (*it)->battleID == battleID)
+		{
+			gs->currentBattles.erase(it);
+			break;
+		}
+	}
+
+	// Re-queue the engagement as a PendingBattle for the defender's next turn.
+	// resolveDeferredBattlesFor will re-fire objectVisited through the standard
+	// MapObjectVisitQuery bracket when the defender (or wrapper auto-resolve)
+	// drives it.
+	deferBattle(army1, army2, tile, hero1, hero2, town);
+
+	logGlobal->info("[rollbackLiveBattle] battle %d (defender %s) rolled back to PendingBattle", battleID.getNum(), defender.toString());
+	return battleID.getNum();
 }
 
 void CGameHandler::debugTriggerAIAttackOnHuman(PlayerColor aiColor)

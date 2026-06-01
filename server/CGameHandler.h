@@ -90,6 +90,14 @@ public:
 		const CGHeroInstance * hero1, const CGHeroInstance * hero2, const CGTownInstance * town);
 	/// Start any battles deferred to this (now-acting) defender. Called at turn start.
 	void resolveDeferredBattlesFor(PlayerColor defender);
+	/// Refs #302: abort an in-progress battle in which `defender` is the defender
+	/// side and re-queue the engagement as a fresh PendingBattle. Used by
+	/// WrapperRollbackLiveBattle when the defender's browser stays disconnected
+	/// past the per-lobby `combatPolicy.midBattleGraceMs` window. Skips
+	/// battleFinalize entirely (no casualties / exp / artifacts) — the battle is
+	/// undone, not resolved. Returns the BattleID that was rolled back, or -1 if
+	/// no live battle matched (idempotent).
+	int rollbackLiveBattleForDefender(PlayerColor defender);
 	/// DEBUG/TEST: force this AI player's hero to attack a human's hero via the
 	/// real startBattle path (drives the Phase 4 deferral deterministically).
 	void debugTriggerAIAttackOnHuman(PlayerColor aiColor);

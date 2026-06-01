@@ -2618,6 +2618,29 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperRollbackLiveBattle")
+	{
+		// homam-web fork (Refs #302): abort an in-progress battle in which the
+		// given color is the defender and re-queue the engagement as a
+		// PendingBattle. Called by the wrapper's LiveBattleWatcher when the
+		// defender's browser stays disconnected past `combatPolicy.midBattleGraceMs`.
+		// Skips battleFinalize entirely (no casualties / exp / artifacts) — the
+		// battle is UNDONE, not resolved. Idempotent: returns rolledBack=false if
+		// no live battle matches the given defender.
+		const int colorInt = static_cast<int>(req["defender"].Integer());
+		PlayerColor defender(colorInt);
+		int rolledBackId = -1;
+		if (server.gh)
+			rolledBackId = server.gh->rollbackLiveBattleForDefender(defender);
+		JsonNode resp;
+		resp["type"].String() = "WrapperRollbackLiveBattleResult";
+		resp["defender"].Integer() = colorInt;
+		resp["rolledBack"].Bool() = rolledBackId >= 0;
+		resp["battleID"].Integer() = rolledBackId;
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperPopQuery")
 	{
 		// Hard escape: forcibly remove a query from the QueriesProcessor.

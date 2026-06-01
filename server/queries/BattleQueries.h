@@ -26,6 +26,13 @@ public:
 	BattleID battleID;
 	std::optional<BattleResult> result;
 
+	// homam-web fork (Refs #302): when true, onRemoval and notifyObjectAboutRemoval
+	// skip the post-battle apply path. Used by WrapperRollbackLiveBattle to abort
+	// an in-progress battle without applying casualties / exp / artifacts, so the
+	// engagement can be re-queued as a fresh PendingBattle. The MapObjectVisitQuery
+	// above us still pops itself cleanly via onExposure (the notify becomes a no-op).
+	bool aborted = false;
+
 	CBattleQuery(CGameHandler * owner);
 	CBattleQuery(CGameHandler * owner, const IBattleInfo * Bi);
 	void notifyObjectAboutRemoval(const CGObjectInstance * visitedObject, const CGHeroInstance * visitingHero) const override;
