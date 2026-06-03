@@ -71,6 +71,7 @@
 #include "queries/QueriesProcessor.h"
 #include "queries/CQuery.h"
 #include "queries/BattleQueries.h"
+#include "queries/MapQueries.h"
 #include "processors/TurnOrderProcessor.h"
 #include "../lib/serializer/GameConnection.h"
 
@@ -2736,6 +2737,18 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 				players.Vector().push_back(pn);
 			}
 			entry["description"].String() = q->toString();
+			// Expose the query type so copilot tools can validate answer
+			// ranges and refuse dangerous query kinds (BattleResult).
+			const char* kind = "Unknown";
+			if (dynamic_cast<const CHeroLevelUpDialogQuery*>(q.get())) kind = "HeroLevelUp";
+			else if (dynamic_cast<const CCommanderLevelUpDialogQuery*>(q.get())) kind = "CommanderLevelUp";
+			else if (dynamic_cast<const CBlockingDialogQuery*>(q.get())) kind = "BlockingDialog";
+			else if (dynamic_cast<const CBattleDialogQuery*>(q.get())) kind = "BattleResult";
+			else if (dynamic_cast<const CGarrisonDialogQuery*>(q.get())) kind = "GarrisonDialog";
+			else if (dynamic_cast<const CTeleportDialogQuery*>(q.get())) kind = "TeleportDialog";
+			else if (dynamic_cast<const OpenWindowQuery*>(q.get())) kind = "OpenWindow";
+			else if (dynamic_cast<const CGenericQuery*>(q.get())) kind = "Generic";
+			entry["kind"].String() = kind;
 			arr.Vector().push_back(entry);
 		}
 		sendRawJson(sock, resp);
