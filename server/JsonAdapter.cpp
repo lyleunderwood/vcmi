@@ -2677,6 +2677,42 @@ void JsonAdapter::handleWrapperQuery(const std::shared_ptr<INetworkConnection> &
 		return;
 	}
 
+	if (queryType == "WrapperQueryGameState")
+	{
+		// Copilot game-state snapshot: day, acting players, pending query count.
+		// Used by getGameState tool — gives the copilot turn-awareness without
+		// requiring it to stitch together multiple queries.
+		JsonNode resp;
+		resp["type"].String() = "WrapperGameState";
+		if (server.gh && server.gh->gs)
+		{
+			resp["day"].Integer() = server.gh->gs->day;
+			JsonNode & acting = resp["actingPlayers"];
+			acting.Vector();
+			if (server.gh->turnOrder)
+			{
+				for (int i = 0; i < PlayerColor::PLAYER_LIMIT_I; i++)
+				{
+					const PlayerColor pc(i);
+					if (server.gh->turnOrder->isPlayerMakingTurn(pc))
+					{
+						JsonNode entry;
+						entry.Integer() = i;
+						acting.Vector().push_back(entry);
+					}
+				}
+			}
+			const auto allQ = server.gh->queries->allQueries();
+			resp["pendingQueryCount"].Integer() = static_cast<int64_t>(allQ.size());
+		}
+		else
+		{
+			resp["error"].String() = "game state not available";
+		}
+		sendRawJson(sock, resp);
+		return;
+	}
+
 	if (queryType == "WrapperListQueries")
 	{
 		// Surface all pending engine-side queries (battle, dialog, level-up, etc.)
